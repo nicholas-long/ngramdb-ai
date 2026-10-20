@@ -1,0 +1,4 @@
+cves.jsonl
+.cve-*/
+stdout.log
+stderr.log
