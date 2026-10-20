@@ -20,7 +20,6 @@ possible hastag usages:
 
 List of all tags:
 common-algo
-complete
 cron-daily
 cron-five
 cve
@@ -31,7 +30,6 @@ needs-hooks
 ngram-hook-add
 ngram-internal
 ngram-meta
-project
 service
 source
 subcommand
