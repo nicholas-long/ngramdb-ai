@@ -10,4 +10,4 @@ fi
 
 searchroot="$1"
 shift
-find "$searchroot" -type d \( -name node_modules -o -name .venv -o -name __pycache__ -o -name .pytest_cache \) -prune -o \( "$@" $findcommandmods \) -print
+find "$searchroot" -type d \( -name node_modules -o -name .venv -o -name __pycache__ -o -name .pytest_cache -o -name '.ngram-import-*' \) -prune -o \( "$@" $findcommandmods \) -print

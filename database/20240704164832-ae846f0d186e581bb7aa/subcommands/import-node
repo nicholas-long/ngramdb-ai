@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Import a node, optionally updating existing source files, preserving its ID."""
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
+ID = re.compile(r'[0-9]{14}-[0-9a-f]{20}')
+SKIP_DIRS = {'node_modules', '.venv', '__pycache__', '.pytest_cache', '.git', 'dist'}
+SKIP_FILES = {'stdout.log', 'stderr.log', 'stdout.log.gz', 'stderr.log.gz',
+              '.ngram.dependencies.hashes', '.hook-ngram-list'}
+
+
+def inventory(directory):
+    """Read validated source bytes once; never dereference links or copy runtime state."""
+    # Respect the source checkout's ignore rules (large collector datasets, caches).
+    allowed = None
+    discovery = subprocess.run(['git', '-C', str(directory), 'rev-parse', '--show-toplevel'], capture_output=True, text=True, timeout=10)
+    if discovery.returncode == 0:
+        checkout = Path(discovery.stdout.strip()).resolve()
+        relative = directory.resolve().relative_to(checkout)
+        listing = subprocess.run(['git', '-C', str(checkout), 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', str(relative)], capture_output=True, check=True, timeout=10)
+        allowed = {Path(os.fsdecode(path)).relative_to(relative) for path in listing.stdout.split(b'\0') if path}
+    result = {}
+    total = 0
+    for parent, dirs, names in os.walk(directory, followlinks=False):
+        for name in list(dirs):
+            relative_dir = (Path(parent) / name).relative_to(directory)
+            if name in SKIP_DIRS or allowed is not None and not any(relative_dir in p.parents for p in allowed):
+                dirs.remove(name)
+            elif (Path(parent) / name).is_symlink() or name.startswith('.'):
+                raise ValueError('Unsupported directory: ' + name)
+        for name in names:
+            if name in SKIP_FILES or allowed is not None and (Path(parent) / name).relative_to(directory) not in allowed:
+                continue
+            if (name.startswith('.') and name not in ('.gitignore', '.link') or
+                name.lower().endswith(('.pem', '.key', '.p12', '.pfx')) or
+                name.lower() in ('credentials', 'auth.json', 'id_rsa', 'id_ed25519')):
+                raise ValueError('Private or unsupported file: ' + name)
+            path = Path(parent) / name
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as source:
+                metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError('Not a regular file: ' + name)
+                if metadata.st_size > 50 * 1024 * 1024:
+                    raise ValueError('Node source file exceeds 50 MiB: ' + name)
+                content = source.read(50 * 1024 * 1024 + 1)
+            total += len(content)
+            if len(content) > 50 * 1024 * 1024 or total > 100 * 1024 * 1024 or len(result) >= 10000:
+                raise ValueError('Node source exceeds import limits')
+            result[path.relative_to(directory)] = (content, stat.S_IMODE(metadata.st_mode) & 0o777)
+    import json
+    if Path('README.md') not in result or Path('data.json') not in result:
+        raise ValueError('Node requires README.md and data.json')
+    if not isinstance(json.loads(result[Path('data.json')][0]), dict):
+        raise ValueError('Node metadata must be a JSON object')
+    return result
+
+
+def import_node(source, root, overwrite=False):
+    source = Path(source).absolute()
+    if not ID.fullmatch(source.name) or source.is_symlink() or not source.is_dir():
+        raise ValueError('Source must be a node directory with a full Ngram ID')
+    files = inventory(source)
+    database = Path(root).resolve() / 'database'
+    if not database.is_dir() or database.is_symlink():
+        raise ValueError('Ngram database is unavailable')
+    target = database / source.name
+    existing = target.exists() or target.is_symlink()
+    if existing:
+        if target.is_symlink() or not target.is_dir():
+            raise ValueError('Node ID already exists: ' + source.name)
+        # Validate every destination before replacing any files.
+        for relative, (content, mode) in files.items():
+            candidate = target / relative
+            if any(p.is_symlink() for p in (candidate, *candidate.parents)):
+                raise ValueError('Existing node contains a symlink')
+            if any(p.exists() and not p.is_dir() for p in candidate.parents):
+                raise ValueError('Existing parent is not a directory: ' + str(relative))
+            if candidate.exists() and not candidate.is_file():
+                raise ValueError('Existing target is not a regular file: ' + str(relative))
+            if not overwrite and (not candidate.is_file() or candidate.read_bytes() != content or stat.S_IMODE(candidate.stat().st_mode) != mode):
+                raise ValueError('Node ID conflicts with existing node: ' + source.name)
+        if not overwrite:
+            return source.name
+    staging = Path(tempfile.mkdtemp(prefix='.ngram-import-', dir=database))
+    try:
+        for relative, (content, mode) in files.items():
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+            destination.chmod(mode)
+        staging.chmod(0o755)
+        if existing:
+            # Keep generated outputs, logs, and files absent from the task snapshot.
+            # Publish each changed source file atomically; leave identical files alone.
+            for relative, (content, mode) in files.items():
+                destination = target / relative
+                if destination.is_file() and destination.read_bytes() == content and stat.S_IMODE(destination.stat().st_mode) == mode:
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staging / relative, destination)
+        else:
+            # Staging directories are excluded from discovery until the rename.
+            if target.exists() or target.is_symlink():
+                raise ValueError('Node ID appeared during import: ' + source.name)
+            os.rename(staging, target)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    return source.name
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('source', help='Absolute or invocation-directory-relative node directory')
+    parser.add_argument('--overwrite', action='store_true', help='Replace source files in an existing node, preserving other files and runtime outputs')
+    args = parser.parse_args()
+    source = Path(args.source)
+    if not source.is_absolute():
+        source = Path(os.environ.get('ngram_run_dir', os.getcwd())) / source
+    try:
+        print(import_node(source, os.environ['ngram_root_dir'], overwrite=args.overwrite))
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        print('ngram import-node: ' + str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

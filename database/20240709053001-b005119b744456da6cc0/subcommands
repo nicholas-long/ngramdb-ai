@@ -13,6 +13,7 @@ dependstats
 findrefsto
 forcelink
 hastag
+import-node
 link
 refdata
 refs

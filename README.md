@@ -43,6 +43,7 @@ findrefsto
 forcelink
 hastag
 id
+import-node
 jsonset
 link
 list
@@ -222,6 +223,9 @@ Usage: ngram jsonset id field value [-n : numeric]
 $ ngram hastag --help
 usage ngram hastag tagquery 20240704164832-ae846f0d186e581bb7aa
 ```
+## subcommand: import-node
+
+
 ## subcommand: link
 
 - create a loose link from one ngram directory to another.

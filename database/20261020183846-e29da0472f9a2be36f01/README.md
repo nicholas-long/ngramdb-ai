@@ -78,7 +78,7 @@ worker can run as the same Unix user, sharing the same private configuration
 and state directory. No extra Unix account or shared ACL setup is required.
 Keep configuration, task outputs and audit logs inaccessible to other users.
 The worker needs access to the allowlisted repositories and writes patch
-proposals into isolated worktrees. HTTP roles still control task submission
+changes in isolated worktrees. HTTP roles still control task submission
 and ownership; Codex sandbox modes still govern task execution.
 
 File access rejects hidden paths, credentials, key files, traversal, symlinks,
@@ -152,14 +152,41 @@ The installed CLI's
 `codex exec --help` was checked for `--json`, `--sandbox`, `-C`, stdin prompts,
 `--ignore-user-config`, `--ephemeral`, and `--output-last-message`.
 
-Read-only uses the read-only sandbox. Patch mode creates a detached Git worktree,
-uses the workspace-write sandbox, captures tracked/untracked proposed changes,
-and ends in needs-review. The source checkout is not patched. Mark reviewed
-records acknowledgement; it does not apply or merge changes. Review and apply
-through your normal Git workflow. Worktrees/results persist for inspection and
-must be pruned by the administrator after review. Continuation/resume is not exposed.
-After an interrupted worker, running tasks fail rather than replay automatically.
-Actual authenticated Codex execution needs testing in the target environment; automated tests use a fake local Codex executable.
+Read-only uses the read-only sandbox and cannot create or update nodes.
+Select **Create or update nodes** for write tasks. The worker snapshots the live
+tracked and untracked source files into a detached worktree, respecting Git
+ignore rules. Uncommitted nodes are included. A temporary Git index records the
+snapshot; the live index, branches and HEAD are not modified and no commit is
+created. Task diffs use that snapshot as their baseline.
+
+After a successful write task, the worker copies changed `database/<ID>/`
+source directories back with `ngram import-node --overwrite SOURCE`. This
+creates new nodes and replaces source files in existing nodes. Matching files
+are left untouched. Generated data, logs, dependency hashes, caches, and files
+absent from the task directory are preserved; copy-back does not delete files.
+Changes outside node directories and whole-node deletions remain proposals and
+finish as needs-review. Node-only tasks finish as completed. The task page lists
+copied-back nodes, including updates to existing IDs.
+
+New node directories are published atomically. Existing source files are
+replaced atomically one file at a time. Failed, timed-out and cancelled Codex
+runs do not copy files back. If publication itself fails, the task retains any
+node IDs already published and reports the error; changes are not rolled back.
+
+For manual recovery, `ngram import-node SOURCE` refuses conflicting existing
+files, while `ngram import-node --overwrite SOURCE` explicitly replaces them.
+The command rejects symlinks, private key/credential files, and malformed
+metadata. It omits runtime state and Git-ignored outputs such as collector
+datasets. Imports are bounded to 10,000 source files, 50 MiB per file and
+100 MiB total. The scheduler excludes temporary `.ngram-import-*` directories.
+
+The source worktree and full diff remain available for inspection. Collectors
+run normally through Ngram after copy-back; task-time network restrictions can
+prevent an initial download without preventing source-node creation. Worktrees
+and results persist and must be pruned after review. Continuation/resume is not
+exposed. Interrupted tasks fail rather than replay automatically. Automated
+worker tests use a fake local Codex executable; actual Codex authentication is
+provided by the user running the worker.
 
 ## Verification
 

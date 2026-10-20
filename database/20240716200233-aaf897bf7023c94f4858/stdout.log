@@ -21,7 +21,9 @@ possible hastag usages:
 List of all tags:
 common-algo
 complete
+cron-daily
 cron-five
+cve
 example
 experiment
 live

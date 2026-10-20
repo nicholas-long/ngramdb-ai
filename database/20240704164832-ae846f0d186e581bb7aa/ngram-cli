@@ -5,7 +5,7 @@ export ngram_script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/n
 export ngram_cli_path="$(realpath $0)"
 export ngram_root_dir=$(echo "$ngram_cli_path" | awk -F / '{OFS="/";NF-=3;print}')
 export ngram_prog="$ngram_root_dir/ngram"
-export PATH="$PATH:$ngram_root_dir"
+export PATH="$ngram_root_dir:$PATH"
 export NGRAM_TAG_FILE="tags.ngram"
 
 # constants

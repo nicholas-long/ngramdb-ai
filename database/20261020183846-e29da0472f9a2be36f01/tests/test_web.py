@@ -317,3 +317,122 @@ def test_sse_delivery_and_revocation(env,monkeypatch):
         with pytest.raises(StopAsyncIteration):
             await anext(response.body_iterator)
     asyncio.run(check())
+
+
+@pytest.mark.parametrize('existing_edit,exit_code',[(False,0),(True,0),(False,7)])
+def test_worker_imports_new_cli_created_nodes(env,monkeypatch,tmp_path,existing_edit,exit_code):
+    import shutil
+    c,root,existing,state=env;headers=sign(c)
+    actual=Path(__file__).resolve().parents[3]
+    cli_id='20240704164832-ae846f0d186e581bb7aa'
+    shutil.copytree(actual/'database'/cli_id,root/'database'/cli_id,ignore=shutil.ignore_patterns('*.log','*.gz','__pycache__'))
+    (root/'ngram').symlink_to('database/'+cli_id+'/ngram-cli')
+    subprocess.run(['git','init',str(root)],check=True,capture_output=True)
+    subprocess.run(['git','-C',str(root),'add','.'],check=True,capture_output=True)
+    subprocess.run(['git','-C',str(root),'-c','user.email=test@example.org','-c','user.name=Test','commit','-m','initial'],check=True,capture_output=True)
+    binary=tmp_path/'bin';binary.mkdir()
+    executable=binary/'codex'
+    executable.write_text('''#!/usr/bin/env python3
+import os,pathlib,shutil,subprocess,sys
+a=sys.argv
+work=pathlib.Path(a[a.index('-C')+1])
+assert shutil.which('ngram')==str(work/'ngram')
+result=subprocess.run(['ngram','create','--title','Task-created collector'],cwd=work,capture_output=True,text=True,check=True)
+node_id=result.stdout.strip().splitlines()[-1]
+run=work/'database'/node_id/'run'
+run.write_text('#!/bin/bash\\necho collector\\n')
+run.chmod(0o755)
+(run.parent/'.gitignore').write_text('generated.jsonl\\n')
+(run.parent/'generated.jsonl').write_text('runtime data')
+if os.environ.get('TEST_EXISTING_EDIT')=='1':
+    (work/'database'/'20240101000000-00000000000000000001'/'README.md').write_text('Changed existing node')
+pathlib.Path(a[a.index('--output-last-message')+1]).write_text('Created '+node_id)
+print('done')
+sys.exit(int(os.environ.get('TEST_EXIT_CODE','0')))
+''')
+    executable.chmod(0o755)
+    monkeypatch.setenv('PATH',str(binary)+os.pathsep+os.environ['PATH'])
+    monkeypatch.setenv('TEST_EXISTING_EDIT','1' if existing_edit else '0')
+    monkeypatch.setenv('TEST_EXIT_CODE',str(exit_code))
+    task=c.post('/api/tasks',headers=headers,json={'repository':'test','prompt':'create a collector','mode':'patch'}).json()
+    worker.finish(task,status='running')
+    original=(existing/'README.md').read_text()
+    worker.execute(task)
+    result=c.get('/api/tasks/'+task['id']).json()
+    if exit_code:
+        assert result['status']=='failed'
+        assert result['importedNodeIds']==[]
+        assert len(list((root/'database').iterdir()))==2
+        return
+    assert result['status']=='completed',result
+    assert len(result['importedNodeIds'])==1
+    node_id=result['importedNodeIds'][0]
+    assert (root/'database'/node_id/'run').read_text()=='#!/bin/bash\necho collector\n'
+    assert os.access(root/'database'/node_id/'run',os.X_OK)
+    assert not (root/'database'/node_id/'generated.jsonl').exists()
+    assert (existing/'README.md').read_text()==('Changed existing node' if existing_edit else original)
+    assert result['updatedNodeIds']==([NODE] if existing_edit else [])
+    assert set(worker.publish_nodes(result,root,state/'worktrees'/task['id']))==set(result['publishedNodeIds'])
+
+
+def test_node_import_validates_and_never_overwrites(tmp_path):
+    import runpy
+    importer=Path(__file__).resolve().parents[3]/'database/20240704164832-ae846f0d186e581bb7aa/subcommands/import-node'
+    publish=runpy.run_path(str(importer))['import_node']
+    source=tmp_path/'source'/OTHER;source.mkdir(parents=True)
+    (source/'README.md').write_text('# Imported')
+    (source/'data.json').write_text('{"title":"Imported"}')
+    run=source/'run';run.write_text('#!/bin/bash\necho ok\n');run.chmod(0o755)
+    (source/'stdout.log').write_text('runtime log')
+    (source/'__pycache__').mkdir();(source/'__pycache__'/'cached.pyc').write_text('cache')
+    root=tmp_path/'live';(root/'database').mkdir(parents=True)
+    (source/'escape').symlink_to(tmp_path/'outside')
+    with pytest.raises(OSError):publish(source,root)
+    assert not (root/'database'/OTHER).exists()
+    (source/'escape').unlink()
+    (source/'.env').write_text('private')
+    with pytest.raises(ValueError,match='Private'):publish(source,root)
+    (source/'.env').unlink()
+    assert publish(source,root)==OTHER
+    destination=root/'database'/OTHER
+    assert not (destination/'stdout.log').exists()
+    assert not (destination/'__pycache__').exists()
+    assert not list((root/'database').glob('.ngram-import-*'))
+    assert publish(source,root)==OTHER
+    (source/'README.md').write_text('Conflicting source')
+    with pytest.raises(ValueError,match='conflicts'):publish(source,root)
+    assert (destination/'README.md').read_text()=='# Imported'
+    (destination/'cves.jsonl').write_text('generated data')
+    (destination/'stdout.log').write_text('live log')
+    assert publish(source,root,overwrite=True)==OTHER
+    assert (destination/'README.md').read_text()=='Conflicting source'
+    assert (destination/'cves.jsonl').read_text()=='generated data'
+    assert (destination/'stdout.log').read_text()=='live log'
+
+
+def test_task_snapshot_includes_uncommitted_nodes_without_changing_live_index(env):
+    _,root,node,state=env
+    subprocess.run(['git','init',str(root)],check=True,capture_output=True)
+    tracked=root/'tracked.txt';tracked.write_text('committed')
+    subprocess.run(['git','-C',str(root),'add','tracked.txt'],check=True,capture_output=True)
+    subprocess.run(['git','-C',str(root),'-c','user.email=test@example.org','-c','user.name=Test','commit','-m','initial'],check=True,capture_output=True)
+    tracked.write_text('staged')
+    subprocess.run(['git','-C',str(root),'add','tracked.txt'],check=True,capture_output=True)
+    tracked.write_text('unstaged')
+    (node/'.gitignore').write_text('generated.jsonl\n')
+    (node/'generated.jsonl').write_text('large generated data stays live')
+    (root/'.gitignore').write_text('.env\n')
+    (root/'.env').write_text('private configuration stays live')
+    index=(root/'.git/index').read_bytes()
+    head=worker.git(root,'rev-parse','HEAD')
+    work=state/'worktrees'/'snapshot-test';work.parent.mkdir()
+    tree=worker.snapshot_worktree(root,work)
+    assert (work/'database'/NODE/'README.md').read_text()==(node/'README.md').read_text()
+    assert (work/'tracked.txt').read_text()=='unstaged'
+    assert not (work/'database'/NODE/'generated.jsonl').exists()
+    assert not (work/'.env').exists()
+    assert (root/'.git/index').read_bytes()==index
+    assert worker.git(root,'rev-parse','HEAD')==head
+    assert worker.git(work,'diff','--name-only',tree)==''
+    (work/'database'/NODE/'README.md').write_text('task fix')
+    assert worker.git(work,'diff','--name-only',tree).strip()=='database/'+NODE+'/README.md'
