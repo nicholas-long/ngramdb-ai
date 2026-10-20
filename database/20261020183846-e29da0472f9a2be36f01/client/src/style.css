@@ -3,3 +3,5 @@
 .output-cards{padding:0 20px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}.output-cards pre{padding:12px;font-size:11px}
 
 .mobile-account{display:none}@media(max-width:700px){.mobile-account{display:block}}
+
+.loose-toggle{display:flex;align-items:center;gap:8px;font-weight:400;margin:12px 0}.loose-toggle input{width:auto}

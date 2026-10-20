@@ -80,9 +80,9 @@ def create_app():
         return graph.detail(node_id)
 
     @app.get('/api/nodes/{node_id}/refs')
-    def refs(node_id: str, session=Depends(auth.identity)):
+    def refs(node_id: str, includeLoose: bool = False, session=Depends(auth.identity)):
         graph.check_id(node_id)
-        return [e for e in graph.snapshot()['edges'] if node_id in (e['source'], e['target'])]
+        return [e for e in graph.snapshot(include_loose=includeLoose)['edges'] if node_id in (e['source'], e['target'])]
 
     @app.get('/api/nodes/{node_id}/files')
     def node_files(node_id: str, path: str = '', session=Depends(auth.identity)):
@@ -105,15 +105,14 @@ def create_app():
 
     @app.get('/api/files')
     def all_files(extension: str = '', mime: str = '', q: str = '', tag: str = '', sort: str = 'path', limit: int = Query(50, ge=1, le=200), cursor: int = Query(0, ge=0), session=Depends(auth.identity)):
-        snap = graph.snapshot()
-        ids = {n['id'] for n in snap['nodes'] if not tag or tag in n['tags']}
-        data = [f for f in snap['files'] if f['nodeId'] in ids and (not extension or f['extension'] == '.' + extension.lstrip('.').lower()) and (not mime or f['mime'].startswith(mime)) and (not q or q.lower() in f['path'].lower() or fnmatch.fnmatch(f['path'].lower(), q.lower()))]
+        ids = {n['id'] for n in graph.node_index() if not tag or tag in n['tags']}
+        data = [f for f in graph.file_index() if f['nodeId'] in ids and (not extension or f['extension'] == '.' + extension.lstrip('.').lower()) and (not mime or f['mime'].startswith(mime)) and (not q or q.lower() in f['path'].lower() or fnmatch.fnmatch(f['path'].lower(), q.lower()))]
         data.sort(key=lambda f: f.get(sort, f['path']) if sort in ('size', 'modified') else f['path'])
         return page(data, limit, cursor)
 
     @app.get('/api/graph')
-    def topology(tag: str = '', focus: str = '', q: str = '', direction: Literal['both','upstream','downstream'] = 'both', depth: int = Query(1, ge=0, le=5), session=Depends(auth.identity)):
-        snap = graph.snapshot()
+    def topology(includeLoose: bool = False, tag: str = '', focus: str = '', q: str = '', direction: Literal['both','upstream','downstream'] = 'both', depth: int = Query(1, ge=0, le=5), session=Depends(auth.identity)):
+        snap = graph.snapshot(include_loose=includeLoose)
         nodes = graph.nodes_with_status()
         ids = {n['id'] for n in nodes if (not tag or tag in n['tags']) and q.lower() in (n['title'] + ' ' + n['id']).lower()}
         if focus:

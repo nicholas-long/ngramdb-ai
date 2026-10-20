@@ -38,6 +38,7 @@ cleanup
 clear-logs
 create
 dependstats
+docrefs
 find-executable
 findrefsto
 forcelink
@@ -205,6 +206,9 @@ Usage: ngram jsonset id field value [-n : numeric]
 
 - find checksums of all dependencies for an ID
 - used to create .hashes files for comparison
+
+## subcommand: docrefs
+
 
 ## subcommand: findrefsto
 

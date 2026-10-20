@@ -1,3 +1,4 @@
+import gzip
 import io
 import json
 from pathlib import Path
@@ -45,7 +46,7 @@ class CollectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             direct, wrapped, staged, output = (root / name for name in (
-                'direct.zip', 'baseline.zip.zip', 'staged', 'cves.jsonl'))
+                'direct.zip', 'baseline.zip.zip', 'staged', 'cves.jsonl.gz'))
             records = [
                 {'dataType': 'CVE_RECORD', 'cveMetadata': {'cveId': identifier}}
                 for identifier in ['CVE-2026-23456', 'CVE-2025-12345']
@@ -65,7 +66,7 @@ class CollectorTests(unittest.TestCase):
             collect.publish(staged, output)
             self.assertEqual(output.stat().st_mtime_ns, timestamp)
             self.assertEqual([json.loads(line)['cveMetadata']['cveId']
-                              for line in previous.splitlines()],
+                              for line in gzip.decompress(previous).splitlines()],
                              ['CVE-2025-12345', 'CVE-2026-23456'])
             # A corrupt inner archive cannot replace the previous live output.
             with zipfile.ZipFile(wrapped, 'w') as wrapper:
@@ -73,6 +74,33 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(zipfile.BadZipFile):
                 collect.write_records(wrapped, staged)
             self.assertEqual(output.read_bytes(), previous)
+
+    def test_main_publishes_gzip_and_retires_legacy_only_on_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "cves.jsonl"
+            legacy.write_text("previous snapshot")
+            record = {"dataType": "CVE_RECORD", "cveMetadata": {"cveId": "CVE-2026-12345"}}
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w") as source:
+                source.writestr("CVE-2026-12345.json", json.dumps(record))
+            with patch.object(collect, "__file__", str(root / "collect.py")), \
+                    patch.object(collect, "latest_baseline", return_value={"browser_download_url": "unused"}):
+                with patch.object(collect, "request", return_value=io.BytesIO(b"invalid zip")):
+                    with self.assertRaises(zipfile.BadZipFile):
+                        collect.main()
+                self.assertEqual(legacy.read_text(), "previous snapshot")
+                with patch.object(collect, "request", return_value=io.BytesIO(archive.getvalue())):
+                    collect.main()
+                output = root / "cves.jsonl.gz"
+                self.assertEqual(json.loads(gzip.decompress(output.read_bytes())), record)
+                self.assertFalse(legacy.exists())
+                previous = output.read_bytes()
+                with patch.object(collect, "request", return_value=io.BytesIO(b"invalid zip")):
+                    with self.assertRaises(zipfile.BadZipFile):
+                        collect.main()
+                self.assertEqual(output.read_bytes(), previous)
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["cves.jsonl.gz"])
 
     def test_wrapper_rejects_duplicate_or_empty_inner_archives(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +122,7 @@ class CollectorTests(unittest.TestCase):
     def test_records_are_stable_and_invalid_input_preserves_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            archive, staged, output = (root / name for name in ("input.zip", "staged", "cves.jsonl"))
+            archive, staged, output = (root / name for name in ("input.zip", "staged", "cves.jsonl.gz"))
             record = {"dataType": "CVE_RECORD", "cveMetadata": {"cveId": "CVE-2026-12345"}}
             with zipfile.ZipFile(archive, "w") as source:
                 source.writestr("cves/2026/CVE-2026-12345.json", json.dumps(record))
@@ -102,8 +130,8 @@ class CollectorTests(unittest.TestCase):
             collect.publish(staged, output)
             previous = output.read_bytes()
             timestamp = output.stat().st_mtime_ns
-            collect.write_records(archive, staged)
-            collect.publish(staged, output)
+            collect.write_records(archive, root / "different-stage-name")
+            collect.publish(root / "different-stage-name", output)
             self.assertEqual(output.stat().st_mtime_ns, timestamp)
             with zipfile.ZipFile(archive, "w") as source:
                 source.writestr("CVE-2026-12345.json", '{}')

@@ -37,6 +37,9 @@ def env(tmp_path, monkeypatch):
         return []
     monkeypatch.setattr(graph, 'cli', cli)
     monkeypatch.setattr(graph, 'CACHE', (0,None))
+    monkeypatch.setattr(graph, 'NODE_CACHE', (0,None))
+    monkeypatch.setattr(graph, 'FILE_CACHE', (0,None))
+    monkeypatch.setattr(graph, 'LOOSE_CACHE', (0,None,None))
     auth.SESSIONS.clear()
     auth.ATTEMPTS.clear()
     client = TestClient(app.create_app(), base_url='https://testserver')
@@ -452,3 +455,84 @@ def test_task_snapshot_includes_uncommitted_nodes_without_changing_live_index(en
     assert worker.git(work,'diff','--name-only',tree)==''
     (work/'database'/NODE/'README.md').write_text('task fix')
     assert worker.git(work,'diff','--name-only',tree).strip()=='database/'+NODE+'/README.md'
+
+
+def test_node_list_and_files_do_not_build_graph_or_read_datasets(env,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    c=env[0];sign(c)
+    allowed={'README.md','data.json','tags.ngram'}
+    original_read=files.read
+    calls=[]
+    def read_metadata(node_id,path,*args,**kwargs):
+        assert path in allowed, 'Node discovery must not read data files'
+        return original_read(node_id,path,*args,**kwargs)
+    def query_only(*args):
+        calls.append(args)
+        assert args==('query',), 'Node/file discovery must not query graph edges'
+        return [NODE]
+    def no_graph(*args,**kwargs):
+        raise AssertionError('This route must not build the graph')
+    monkeypatch.setattr(files,'read',read_metadata)
+    monkeypatch.setattr(graph,'cli',query_only)
+    monkeypatch.setattr(graph,'snapshot',no_graph)
+    # Simulate a slow graph refresh holding its lock: metadata still responds.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        graph.LOCK.acquire()
+        try:
+            response=pool.submit(c.get,'/api/nodes').result(timeout=2)
+        finally:
+            graph.LOCK.release()
+    assert response.status_code==200
+    assert response.json()['items'][0]['id']==NODE
+    assert calls==[('query',)]
+    response=c.get('/api/files?extension=json')
+    assert response.status_code==200 and response.json()['total']==2
+    assert calls==[('query',)]
+
+
+def test_graph_loose_references_are_opt_in(env,monkeypatch):
+    c=env[0];sign(c)
+    calls=[]
+    def cli(*args):
+        calls.append(args)
+        if args==('query',):return [NODE,OTHER]
+        if args==('docrefs',NODE):return [OTHER]
+        return []
+    monkeypatch.setattr(graph,'cli',cli)
+    # Default graph requests must not need the optional loose-reference lock.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        graph.LOOSE_LOCK.acquire()
+        try:
+            response=pool.submit(c.get,'/api/graph').result(timeout=2)
+        finally:
+            graph.LOOSE_LOCK.release()
+    assert response.status_code==200
+    assert response.json()['edges']==[]
+    assert not any(call[0] in ('docrefs','looserefs') for call in calls)
+    included=c.get('/api/graph?includeLoose=true').json()
+    assert included['edges']==[{'id':NODE+':'+OTHER,'source':NODE,'target':OTHER,'kind':'loose'}]
+    assert c.get('/api/graph').json()['edges']==[]
+
+
+def test_document_references_never_open_large_data_files(tmp_path,monkeypatch,capsys):
+    import runpy
+    root=tmp_path/'ngram';source=root/'database'/NODE;source.mkdir(parents=True)
+    (root/'database'/OTHER).mkdir()
+    (source/'README.md').write_text('# Source\n[Target](../'+OTHER+')\n')
+    # A sparse multi-GB dataset is cheap to create and must never be opened.
+    dataset=source/'cves.jsonl'
+    with dataset.open('wb') as f:
+        f.write(OTHER.encode())
+        f.truncate(2*1024*1024*1024)
+    script=Path(__file__).resolve().parents[3]/'database/20240704164832-ae846f0d186e581bb7aa/subcommands/docrefs'
+    module=runpy.run_path(str(script))
+    monkeypatch.setenv('ngram_root_dir',str(root))
+    monkeypatch.setattr(__import__('sys'),'argv',['docrefs',NODE])
+    original_open=os.open
+    def docs_only(path,*args,**kwargs):
+        assert Path(path).suffix.lower()=='.md', 'Documentation lookup opened a dataset'
+        return original_open(path,*args,**kwargs)
+    monkeypatch.setattr(os,'open',docs_only)
+    assert module['main']()==0
+    assert capsys.readouterr().out.strip()==OTHER

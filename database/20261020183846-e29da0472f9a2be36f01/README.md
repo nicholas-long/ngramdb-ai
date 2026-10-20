@@ -108,14 +108,28 @@ PID reuse can make liveness ambiguous; statuses are observations, not durable le
 `refs` now preserves colons in script lines and handles single executable files,
 so JSON/jq expressions do not hide dependencies.
 
-Graph discovery uses fixed argument arrays invoking `ngram query`, `refs`, and
-`query id ID looserefs`, with timeouts and a 15-second cache. `source → target`
-means source depends on or references target, matching CLI semantics. No HTTP
-endpoint accepts arbitrary query operators or shell strings. The index node
-materializes a stable manifest outside the graph on its cron/hook schedule.
-Files themselves are opened fresh on each request, so output changes appear
-without restarting Python or rebuilding React. Global filename manifests can
-lag up to 15 seconds. Full ID routes survive title changes.
+Node discovery invokes `ngram query` once and reads only bounded `README.md`,
+`data.json`, and `tags.ngram` metadata. Node lists and details never build graph
+relationships or scan output data. File indexing walks allowed filenames and
+stat metadata, never file contents. Node, file, dependency and optional loose
+indexes have separate locks/caches, so a graph refresh cannot block node lists.
+
+The ordinary graph uses executable dependencies from `ngram refs`. Loose
+references are **off by default**, including in the index materializer. The
+Graph page has an explicit “Include documentation links” checkbox;
+`/api/graph?includeLoose=true` and node refs with `includeLoose=true` opt in.
+Opted-in relationships use `ngram docrefs ID`, which scans only Markdown,
+skips files over 1 MiB, and reads at most 4 MiB per node. It does not search
+JSON/JSONL datasets or generated outputs. Full `ngram query looserefs` remains
+available explicitly at the CLI but is never called by the web service.
+
+`source → target` means source depends on or refers to target. Discovery uses
+fixed argument arrays, a 15-second cache and bounded CLI timeouts; a timed-out
+query terminates its process group so grep/find children cannot keep running.
+No HTTP endpoint accepts arbitrary graph query operators or shell strings.
+The index node materializes dependency edges and a safe file-stat manifest
+outside the graph. Files are opened fresh for previews, so output changes appear
+without Python restarts or React builds. Metadata manifests may lag 15 seconds.
 
 Use your supervisor to restart **only the web service** after backend changes;
 there is no production auto-reload. With systemd, use the example service in

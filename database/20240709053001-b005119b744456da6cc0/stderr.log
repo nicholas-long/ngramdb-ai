@@ -11,6 +11,7 @@ processing jsonset
 processing cleanup
 processing checksums
 processing dependstats
+processing docrefs
 processing findrefsto
 processing forcelink
 processing hastag

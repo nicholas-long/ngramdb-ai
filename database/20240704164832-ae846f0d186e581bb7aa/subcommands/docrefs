@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Find loose node references in Markdown, without searching generated datasets."""
+import argparse
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+ID = re.compile(r'[0-9]{14}-[0-9a-f]{20}')
+EXCLUDED = {'node_modules', 'venv', 'dist', '__pycache__'}
+MAX_FILE = 1024 * 1024
+MAX_TOTAL = 4 * 1024 * 1024
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('node_id')
+    args = parser.parse_args()
+    database = Path(os.environ['ngram_root_dir']) / 'database'
+    root = database / args.node_id
+    if not ID.fullmatch(args.node_id) or root.is_symlink() or not root.is_dir():
+        parser.error('Expected an existing full node ID')
+    known = {p.name for p in database.iterdir() if ID.fullmatch(p.name) and p.is_dir() and not p.is_symlink()}
+    found = set()
+    remaining = MAX_TOTAL
+    for parent, dirs, names in os.walk(root, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if not name.startswith('.') and name not in EXCLUDED and not (Path(parent) / name).is_symlink())
+        for name in sorted(names):
+            path = Path(parent) / name
+            if name.startswith('.') or path.suffix.lower() != '.md' or path.is_symlink():
+                continue
+            try:
+                size = path.stat().st_size
+                if size > MAX_FILE or size > remaining:
+                    continue
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, 'rb') as source:
+                    if not stat.S_ISREG(os.fstat(fd).st_mode):
+                        continue
+                    content = source.read(min(MAX_FILE, remaining) + 1)
+                if len(content) > min(MAX_FILE, remaining):
+                    continue
+            except OSError:
+                continue
+            remaining -= len(content)
+            found.update(ID.findall(content.decode('utf8', 'replace')))
+    for target in sorted(found & known - {args.node_id}):
+        print(target)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

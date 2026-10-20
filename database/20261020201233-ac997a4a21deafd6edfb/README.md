@@ -4,9 +4,17 @@ Downloads the complete daily baseline from the [official CVE List](https://githu
 
 Tagged `cron-daily`: NgramDB reruns it after roughly 24 hours while `ngram start` is running, or on the next `ngram run` after that interval. This tag does not install an operating-system cron job.
 
-Run manually with `./ngram run-single 20261020201233-ac997a4a21deafd6edfb` from the repository root. Requires Python 3, outbound HTTPS to GitHub's API and release downloads, and space for the full compressed baseline plus the inner ZIP (for wrapped artifacts) and the JSON Lines output. No API key or extra Python packages are required.
+Run manually with `./ngram run-single 20261020201233-ac997a4a21deafd6edfb` from the repository root. Requires Python 3, outbound HTTPS to GitHub's API and release downloads, and space for the full compressed baseline plus the inner ZIP (for wrapped artifacts) and the gzip-compressed JSON Lines output. No API key or extra Python packages are required.
 
-Output: `cves.jsonl`, one complete CVE JSON record per line, ordered by archive path with sorted object keys. Includes rejected records as provided upstream; consumers can filter `cveMetadata.state`. This is the latest daily baseline, not the hourly delta feed. The full archive is downloaded on every run, validated without extracting paths, and discarded. The output is atomically replaced only when content changes; download or validation failure preserves the previous snapshot and exits unsuccessfully. The initial run needs network access before output is available.
+Output: `cves.jsonl.gz`, one complete CVE JSON record per line, ordered by archive path with sorted object keys. Includes rejected records as provided upstream; consumers can filter `cveMetadata.state`. This is the latest daily baseline, not the hourly delta feed. The full archive is downloaded on every run, validated without extracting paths, and discarded. The output is atomically replaced only when content changes; download or validation failure preserves the previous snapshot and exits unsuccessfully. The initial run needs network access before output is available.
+
+Records are streamed directly into gzip without staging an uncompressed JSONL file. Gzip headers omit timestamps and filenames to keep unchanged snapshots stable. After successful publication, any legacy `cves.jsonl` is removed; failed runs preserve it.
+
+Read the compressed snapshot with standard pipelines, for example from this node directory:
+
+```bash
+gzip -dc cves.jsonl.gz | jq -r 'select(.cveMetadata.state == "PUBLISHED") | .cveMetadata.cveId'
+```
 
 The large generated dataset and temporary downloads are ignored by Git. Check `stderr.log` for execution failures. Run collector checks with `python3 -m unittest discover -s database/20261020201233-ac997a4a21deafd6edfb -p 'test_*.py'`.
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Materialize the official daily CVE baseline as deterministic JSON Lines."""
+"""Materialize the official daily CVE baseline as deterministic gzip-compressed JSON Lines."""
 from contextlib import contextmanager
+import gzip
+import io
 import json
 import os
 from pathlib import Path
@@ -65,7 +67,12 @@ def record_archive(archive, staging_directory):
 def write_records(archive, destination):
     count = 0
     seen = set()
-    with record_archive(archive, Path(destination).parent) as source, open(destination, "w", encoding="utf-8") as output:
+    # Omit the staging filename and timestamp so identical records produce
+    # identical gzip bytes, regardless of when or where collection runs.
+    with record_archive(archive, Path(destination).parent) as source, \
+            open(destination, "wb") as raw, \
+            gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed, \
+            io.TextIOWrapper(compressed, encoding="utf-8", newline="\n") as output:
         for name in sorted(source.namelist()):
             filename = name.rsplit("/", 1)[-1]
             if not CVE.fullmatch(filename):
@@ -107,9 +114,11 @@ def main():
         archive = stage / "baseline.zip"
         with request(asset["browser_download_url"]) as response, open(archive, "wb") as output:
             shutil.copyfileobj(response, output)
-        records = stage / "cves.jsonl"
+        records = stage / "cves.jsonl.gz"
         write_records(archive, records)
-        publish(records, root / "cves.jsonl")
+        publish(records, root / "cves.jsonl.gz")
+        # Retire the old large snapshot only after its replacement is ready.
+        (root / "cves.jsonl").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
