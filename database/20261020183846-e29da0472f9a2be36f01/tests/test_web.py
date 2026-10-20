@@ -212,7 +212,7 @@ def test_real_scheduler_failure_events_and_dependency_pruning(tmp_path):
     env = dict(os.environ, NGRAM_RUNTIME_DIR=str(runtime))
     def cli(*args):
         return subprocess.run([str(root/'ngram'),*args], cwd=root,env=env,capture_output=True,text=True)
-    created = cli('create','--title','Integration fixture')
+    created = cli('create','--title','Integration fixture','--tag','cron-daily')
     assert created.returncode == 0
     node_id=created.stdout.strip().splitlines()[-1]
     node=root/'database'/node_id
@@ -221,7 +221,23 @@ def test_real_scheduler_failure_events_and_dependency_pruning(tmp_path):
     recorded=[json.loads(line) for line in (runtime/'events.jsonl').read_text().splitlines()]
     assert [e['kind'] for e in recorded]==['started','completed']
     assert recorded[-1]['exitCode']==7
-    assert not (node/'.ngram.dependencies.hashes').exists()
+    hashes=node/'.ngram.dependencies.hashes'
+    assert hashes.is_file() and hashes.stat().st_size>0
+    assert hashes.read_text()==cli('dependstats',node_id).stdout
+    recorded_before=(runtime/'events.jsonl').read_bytes()
+    hash_time=hashes.stat().st_mtime_ns
+    assert cli('run-single',node_id).returncode==2
+    assert hashes.stat().st_mtime_ns==hash_time
+    assert (runtime/'events.jsonl').read_bytes()==recorded_before
+    # Expiring the daily hash permits another failed attempt, then skips again.
+    expired=time.time()-86400-120
+    os.utime(hashes,(expired,expired))
+    cli('run','--single')
+    attempts=[json.loads(line) for line in (runtime/'events.jsonl').read_text().splitlines()]
+    failures=[e for e in attempts if e.get('nodeId')==node_id and e['kind']=='completed']
+    assert len(failures)==2 and all(e['exitCode']==7 for e in failures)
+    assert hashes.stat().st_mtime>expired
+    assert cli('run-single',node_id).returncode==2
     run.write_text('#!/bin/bash\necho stable\n')
     assert cli('run-single',node_id).returncode==0
     assert cli('run-single',node_id).returncode==2

@@ -85,11 +85,22 @@ started_at=$SECONDS
 (cd "$NGRAM_ID_DIR" && ./run) 2> "$stderrfile" | "$ngram_prog" replace "$stdoutfile"
 run_status=${PIPESTATUS[0]}
 python3 "$event_helper" "$id" "$run_id" completed "$$" "$run_status" "$((SECONDS - started_at))"
+# Record every completed attempt, including failures, so unchanged inputs do not
+# trigger an immediate retry. Stage outside the node to keep the hashes stable.
+temprunstats=$(mktemp) || exit 1
+if ! "$ngram_prog" dependstats "$id" > "$temprunstats"; then
+  rm -f "$temprunstats"
+  echo "unable to record dependency hashes for $id" >&2
+  exit 1
+fi
+if ! mv "$temprunstats" "$runstats"; then
+  rm -f "$temprunstats"
+  exit 1
+fi
 if [ "$run_status" != "0" ]; then
   echo "run failed with exit code $run_status" >&2
   exit 1
 fi
-"$ngram_prog" dependstats "$id" > "$runstats"
 
 echo "done running Ngram ID $id" >/dev/stderr
 

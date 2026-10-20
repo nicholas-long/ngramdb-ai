@@ -96,7 +96,8 @@ logs, task data and arbitrary world-readable files are not public.
 
 The CLI's `run-single` emits started/completed JSONL events with full node ID,
 run ID, host, process ID, duration and actual program exit code. The scheduler also emits pass completion events. A failing run
-returns 1 and does not refresh successful dependency hashes. Events live outside
+returns 1 and still updates dependency hashes after the attempt, so unchanged
+inputs are skipped until the cron interval expires or inputs change. Events live outside
 the graph in `NGRAM_RUNTIME_DIR` (default `~/.local/state/ngramdb/runtime`).
 The server and scheduler must share this location. Event reads are bounded to
 the last 2 MiB; rotate/archive the log externally for long-running deployments.
