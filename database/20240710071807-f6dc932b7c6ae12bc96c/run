@@ -1,4 +1,5 @@
 #!/bin/bash
 
+filesizes="$PWD/filesizes.csv"
 cd "$ngram_root_dir"
-du -hs database/* | sort -hr
+du -hs database/* | sort -hr | awk '{print $1 "," $2}' > $filesizes
