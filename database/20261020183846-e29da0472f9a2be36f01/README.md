@@ -8,6 +8,7 @@ This is an ordinary Ngram service node. Node creation uses `ngram create`.
 - [Opt-in Codex worker](../20261020183847-41da3f55465c5c527972)
 - [Example collector](../20261020184448-ff03b1f0dce6debea036)
 - [Example summary](../20261020184448-1807f124753c9185314c)
+- [Operations and lessons learned](../20261020181811-69c80a21731282ab1f3e/WEB-OPERATIONS.md)
 - [Specification](../20261020181811-69c80a21731282ab1f3e/WEB-UI-SPEC.md)
 
 ## Local setup

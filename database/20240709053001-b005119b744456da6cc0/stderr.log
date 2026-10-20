@@ -1,28 +1,28 @@
-writing readme file /Users/coyote/ngramdb-ai/README.md
-processing create
-processing query
-processing tui
-processing run
-processing start
-processing logs
-processing id
-processing list
-processing jsonset
-processing cleanup
-processing checksums
-processing dependstats
-processing docrefs
-processing findrefsto
-processing forcelink
-processing hastag
-processing import-node
-processing link
-processing refdata
-processing refs
-processing replace
-processing set-title
-processing stubname
-processing tag
-processing tagfiles
-processing tsort
-processing venv
+./run: line 7: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted
+./run: line 30: /dev/stderr: Operation not permitted

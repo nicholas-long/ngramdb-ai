@@ -1,6 +1,6 @@
 # NgramDB Web: filesystem-first dashboard and agent control plane
 
-Status: **proposed implementation plan**. This is a specification for coding agents, not a description of an existing working web feature.
+Status: **design specification with an implemented initial release** (2026-10-20). See [operations and verified behavior](WEB-OPERATIONS.md) and the [web node README](../20261020183846-e29da0472f9a2be36f01/README.md) for what is shipped. Remaining proposals below are not promises of implemented features. Current behavior takes precedence: same Unix user for web/worker, automatic successful node-source copy-back, and loose references disabled by default.
 
 ## Objective
 
@@ -51,7 +51,7 @@ database/<WEB_NODE_ID>/
 └── .build-hash                 # optional input digest / build cache
 ```
 
-Make executables and dependency linkage match verified NgramDB conventions. A companion `codex-worker` node should be a **separate node and process identity**. A possible third node materializes graph/index JSON for fast browsing and can carry `ngram-hook-add` to refresh on newly created nodes. Start small: materialization can initially be done by the web node or on demand.
+Make executables and dependency linkage match verified NgramDB conventions. A companion `codex-worker` node should be a **separate node and process**, running as the same Unix user as the website. A possible third node materializes graph/index JSON for fast browsing and can carry `ngram-hook-add` to refresh on newly created nodes. Start small: materialization can initially be done by the web node or on demand.
 
 ## Runtime architecture
 
@@ -67,7 +67,7 @@ Ngram run/start scheduler -----> graph-index materializer (JSON snapshots)
      |                                     |
      +---- task inbox <--- validated authenticated POST task
      |          |
-     +---- Codex worker (separate Unix user) --> task log, results, diffs
+     +---- Codex worker (same Unix user, separate process) --> task log, results, diffs
 ```
 
 Data changes: serve changed files on next request and optionally push `file_changed`/`node_finished` SSE updates; do **not** rebuild frontend or restart the Python service. Frontend source changes: rebuild Vite assets through the web node `run` script; service can serve updated hashed assets without restarting. Python backend code changes: restart the service via a supervisor (or verified Ngram service mechanism). Avoid making server reloads depend on every data file write.
@@ -89,7 +89,7 @@ Show latest run activity, running/failed/stale nodes, counts, last successful sc
 
 ### 2. Graph (`/graph`)
 
-Use a graph JSON snapshot built from `ngram query`, `refs`/`refdata` and documented relationship types. Nodes are identified by **full stable IDs**, displayed with short labels and README titles. Keep the full ID in tooltip/detail panel. Edge styles distinguish executable dependency from loose Markdown link when supported. Highlight running nodes; green completed, amber queued/stale, red failed. Animation should be subtle and optional for reduced-motion users. Click opens node detail; pan/zoom, filter by tags/type, search, and focus upstream/downstream neighborhood. Activity arrives via SSE; don't redraw the whole graph for every log line.
+Use a graph JSON snapshot built from `ngram query`, `refs`/`refdata` and documented relationship types. Nodes are identified by **full stable IDs**, displayed with short labels and README titles. Keep the full ID in tooltip/detail panel. Executable dependencies are the default graph. Loose Markdown links are optional and disabled by default; explicit opt-in uses bounded Markdown-only discovery, never dataset content scans. Highlight running nodes; green completed, amber queued/stale, red failed. Animation should be subtle and optional for reduced-motion users. Click opens node detail; pan/zoom, filter by tags/type, search, and focus upstream/downstream neighborhood. Activity arrives via SSE; don't redraw the whole graph for every log line.
 
 ### 3. Node browser (`/nodes`, `/nodes/:id`)
 
@@ -116,7 +116,7 @@ These are **proposed event fields**; implement/test logging before making them a
 
 ### 6. Agent tasks (`/tasks`, `/tasks/:id`)
 
-Authenticated owner/admin can submit a prompt, select an allowlisted repository/working directory, choose read-only/patch proposal mode, inspect event stream, logs, results and diffs, and approve changes in a separate workflow. Create durable task files with unique IDs, status transitions and run output; a dedicated worker uses `codex exec --json` or supported SDK and persists outputs. Expose no arbitrary CLI flags and avoid shell string interpolation. Support continuation/resume only after testing Codex command syntax and session lifetime. Support cancel/timeout and idempotent task intake. Distinguish queued, running, completed, failed, cancelled and needs-review states.
+Authenticated owner/admin can submit a prompt, select an allowlisted repository/working directory, choose read-only or Create or update nodes mode and inspect event streams, logs, results and diffs. Successful write tasks automatically import new and edited node source files with overwrite; changes outside nodes remain proposals for review. Create durable task files with unique IDs, status transitions and run output; a dedicated worker uses `codex exec --json` or supported SDK and persists outputs. Expose no arbitrary CLI flags and avoid shell string interpolation. Support continuation/resume only after testing Codex command syntax and session lifetime. Support cancel/timeout and idempotent task intake. Distinguish queued, running, completed, failed, cancelled and needs-review states.
 
 ## Basic API contract (v1 proposal)
 
@@ -165,7 +165,7 @@ Roles for MVP:
 - **Viewer**: read allowed internal graph/node metadata and non-secret files, no task creation.
 - **Operator/Admin**: browse permitted resources, submit/cancel agent tasks, see private task results and audit actions.
 
-Unix DAC is a second enforcement layer. `chmod 644` means a *local process* can read a file, **not** that HTTP clients have authorization to it. Do not expose all world-readable files automatically; use an explicit public export root/manifest and separate private namespaces. Restrict the web process to read-only access to graph data plus write-only access to a dedicated task inbox. Run Codex and collectors under separate users, with scoped permissions. Never serve `.env`, credentials, internal `.git`, private keys, session secrets or authentication data. Put explicit deny rules in tests.
+Unix DAC is a second enforcement layer. `chmod 644` means a *local process* can read a file, **not** that HTTP clients have authorization to it. Do not expose all world-readable files automatically; use an explicit public export root/manifest and separate private namespaces. Restrict the web process to read-only access to graph data plus write-only access to a dedicated task inbox. The supported deployment runs the web service and Codex worker as the same Unix user; a separate Unix account is not required. Apply HTTP authorization and Codex sandbox restrictions. Never serve `.env`, credentials, internal `.git`, private keys, session secrets or authentication data. Put explicit deny rules in tests.
 
 Normalize node IDs and relative paths, reject path traversal/NUL bytes, ensure canonical resolved path stays beneath an allowed root, and treat symlinks as untrusted (default deny for download/preview; or resolve and check both root and target). Beware that Markdown links/images, raw HTML and content from nodes may be untrusted and could lead to XSS or SSRF. Disable server-side fetching of arbitrary URLs from Markdown. Serve potentially active files as attachment, and set Content-Security-Policy and `X-Content-Type-Options: nosniff`.
 

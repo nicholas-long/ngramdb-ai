@@ -2,7 +2,7 @@
 
 This file describes the existing NgramDB project, its conventions, and how to work on it safely. It is intended to live at the repository root as `AGENTS.md`.
 
-> Source of truth: repository code and generated documentation, especially `README.md`, `ngram`, the `database/` nodes, and `run-tests`. This document was drafted from the publicly accessible project README on 2026-10-20; inspect local source before relying on implementation-specific details. Do not mistake planned web-dashboard features for existing functionality.
+> Source of truth: repository code and generated documentation, especially `README.md`, `ngram`, the `database/` nodes, and `run-tests`. Updated against this checkout on 2026-10-20. The web dashboard, index and opt-in task worker are implemented; consult their node READMEs and docs/WEB-OPERATIONS.md for current behavior. The original spec also contains future work.
 
 ## Purpose and mental model
 
@@ -20,12 +20,16 @@ ngramdb/
 ├── docs/                  # symbolic link to AI Agent documentation directory within ngram database
 ├── README.md              # generated project documentation, CLI help, examples
 ├── log.md                 # project log
+├── initialize-web         # symlink to web node Bash setup script
+├── AGENTS.md              # coding and operational conventions
 ├── run-tests              # test runner
 ├── .gitignore
 └── LICENSE
 ```
 
 Nodes typically use a `README.md` for their title and human-readable links, `data.json` for structured metadata, runnable program files, and artifacts/logs. The exact filenames for executable entry points and dependencies vary with the node conventions: **inspect an existing node or CLI implementation before adding one**. Known files/concepts include `stdout.log`, `.ngram.dependencies.hashes`, `.hook-ngram-list`, executable `run-service`, and special tags. Do not assume a proposed `nodes/`, `state/`, or `inbox/` top-level directory exists: the current source tree uses `database/`.
+
+**Create every new node with `./ngram create`**; never invent an ID or create an application directory at the root. Keep Python environments in the owning node and npm manifests, lockfiles, `node_modules` and build intermediates in the web node's `client/`. Do not install npm dependencies at the repository root.
 
 ### Links and dependencies
 
@@ -48,6 +52,8 @@ Run `./ngram --help` and `./ngram <subcommand> --help` against the checked-out v
 | `ngram tag` / `ngram hastag` | Mutate/list tags; test tag membership |
 | `ngram link` / `ngram forcelink` | Create loose and executable graph links |
 | `ngram refs` / `ngram findrefsto` / `ngram refdata` | Inspect graph references |
+| `ngram docrefs ID` | Bounded Markdown-only documentation references; explicit opt-in |
+| `ngram import-node [--overwrite] SOURCE` | Copy node source files into the database, preserving generated/runtime files |
 | `ngram query` | Query tags, metadata and graph links with an RPN-like language |
 | `ngram run` | Run change-driven graph cycles until stable |
 | `ngram run-single` | Run single node (inspect help before use) |
@@ -91,6 +97,10 @@ Documented tags:
 - `cron-five`: approximately 5m periodic reruns.
 
 Tag notation when querying uses `@`, e.g. `@cron-hourly`. Verify current scheduler behavior and applicable test coverage when changing timing or cooldown logic. A task which stays alive belongs in a `service` node; a short polling collector usually belongs in `live` or a cron-tagged node.
+
+A completed `run-single` attempt **must write `.ngram.dependencies.hashes` even when the program fails**. Stage hashes outside the node and publish after execution so generated files are reflected. Return codes are 0 for success, 1 for failure, 2 for unchanged/skipped, and 3 for successful live execution. Before this fix, failed collectors retried every scheduler pass because their hashes never updated.
+
+Cron tags expire recorded hashes during scheduler passes; they are interval-based, not wall-clock OS cron jobs. Changed inputs can still trigger earlier runs. `run-single` alone does not expire cron hashes or force unchanged nodes to run. Preserve the previous valid output on collector failures; a failure must not become an immediate retry loop.
 
 ## Graph query language: use it in scripts
 
@@ -162,7 +172,16 @@ ngram query @test json | jq '.'
 
 ## Service and web dashboard work
 
-The planned web UI is described in **`WEB-UI-SPEC.md`** (proposed architecture, not necessarily implemented). It should be built as an ordinary NgramDB service node inside `database/<ID>/`, with a Python API, React + TypeScript client, static materialized data, live execution events, node browsing, Markdown rendering, graph visualization and authenticated agent-task submission.
+The implemented services are:
+
+| Node | ID |
+| --- | --- |
+| Web API and React client | `20261020183846-e29da0472f9a2be36f01` |
+| Graph/file index | `20261020183847-1fd46fffd14b7dc91e77` |
+| Opt-in Codex worker | `20261020183847-41da3f55465c5c527972` |
+| Daily CVE collector | `20261020201233-ac997a4a21deafd6edfb` |
+
+Use [the operations guide](docs/WEB-OPERATIONS.md) for actual checkout paths, setup and troubleshooting, and the web node README for API/security details. `docs/WEB-UI-SPEC.md` records design intent; do not treat every proposed feature as shipped.
 
 Key architecture principles:
 
@@ -172,6 +191,23 @@ Key architecture principles:
 4. For code changes use a controlled restart (systemd or service supervisor) or a service-node mechanism verified in the checkout. Do not use development auto-reload for production.
 5. Keep public file publishing separate from private filesystem access and HTTP authorization. Unix permissions constrain the web *process*, not individual HTTP visitors.
 6. The web server must not execute arbitrary shells or Codex prompts directly from HTTP requests. Enqueue authenticated, validated tasks and let a separate worker process them.
+
+### Task execution and publication
+
+- Web and worker run as the **same Unix user**. No extra account or UID configuration is required. HTTP intake only enqueues tasks; the worker is a separate process enabled by `NGRAM_CODEX_WORKER_ENABLED=1`.
+- Configuration and private state default to `~/.local/state/ngram-web/config.json` and `~/.local/state/ngram-web`. “Shared state” means this filesystem directory used by both processes, not a separate service. Custom state/config environment values must match.
+- Derive repository labels from the Ngram root directory or Git information, never hardcode `ngramdb`. This checkout is `ngramdb-ai`.
+- Write tasks snapshot live tracked and untracked source using a temporary Git index, respecting ignore rules. Do not modify the live Git index, HEAD or branches to create task baselines.
+- Successful write tasks publish new and edited node sources via `ngram import-node --overwrite`. Existing matching filenames are replaced; missing files, generated datasets, logs and hashes are preserved. New directories publish atomically; existing files replace atomically individually. Publication can partially succeed and is not rolled back.
+- Failed/cancelled/timed-out execution does not publish. Changes outside node directories and whole-node deletions remain proposals (`needs-review`). Read-only tasks cannot publish. Keep results/worktrees for review; cleanup is manual.
+
+### Large datasets and optional references
+
+Loose references are low priority and **off by default**. Never make node listing, details or file search wait for loose-reference discovery, graph construction or dataset reads. Node metadata, file stats, dependency edges and optional documentation edges have independent locks/caches. Discover IDs with the CLI, read bounded metadata, and index filenames/stat information without reading output contents.
+
+The old web path called `query looserefs` and recursively scanned a CVE dataset exceeding 1.5 GB to list only about 30 nodes. Use `ngram refs` for executable dependencies. Explicit `includeLoose=true` requests use `ngram docrefs`, limited to Markdown files of at most 1 MiB and 4 MiB per node. Kill the entire subprocess group on CLI timeout, including grep/find descendants. Do not put full-content `looserefs` on an ordinary HTTP request path.
+
+The CVE collector accepts direct baseline ZIPs and `.zip.zip` wrappers containing `cves.zip`; stage the inner ZIP on disk and never extract archive paths. Current output is deterministic `cves.jsonl.gz`, streamed and atomically published only on change. Keep downloads and large outputs ignored by Git and out of task imports. See its node README and tests for format details.
 
 ## Development protocol for agents
 
@@ -184,6 +220,8 @@ Key architecture principles:
 7. Do not commit secrets, generated credentials, private task prompts, or large runtime datasets. Keep templates and examples safe to version-control.
 8. Document new CLI flags, tags, node formats and permissions, and update relevant generated documentation through its actual generation mechanism.
 
-## Provenance / areas requiring checkout verification
+## Documentation maintenance
 
-Derived from the public README at https://github.com/nicholas-long/ngramdb (accessed 2026-10-20). Some linked per-node documentation and executable sources were not accessible while drafting; hence commands such as `run-single`, `refstype`, `filterjson`, daemon supervision, and exact executable filenames should be checked against the local checkout. This file is a reference for agents, not a substitute for reading current source.
+Update node READMEs and the documentation node rather than manually patching generated root documentation. The root README generator is `database/20240709053001-b005119b744456da6cc0/run`; regenerate with `./ngram run-single 20240709053001-b005119b744456da6cc0`. Do not run the entire scheduler just to regenerate docs, and do not start/restart persistent services for documentation-only work. Stop only the identified service when asked; verify its listener is gone and avoid killing unrelated scheduler/worker processes.
+
+For web code checks, run pytest from the web node with its development requirements installed, build with `npm --prefix client run build`, and run `./run-tests` at the root. Documentation-only edits need link/content validation, not service startup or dependency installation. Never report a check as passed without running it.
