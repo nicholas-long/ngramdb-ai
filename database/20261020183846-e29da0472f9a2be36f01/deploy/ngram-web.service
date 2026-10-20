@@ -1,0 +1,20 @@
+[Unit]
+Description=NgramDB Web
+After=network.target
+
+[Service]
+User=ngram-web
+WorkingDirectory=/srv/ngramdb/database/20261020183846-e29da0472f9a2be36f01
+Environment=NGRAM_WEB_STATE=/var/lib/ngram-web
+Environment=NGRAM_WEB_CONFIG=/etc/ngram-web/config.json
+Environment=NGRAM_RUNTIME_DIR=/var/lib/ngramdb/runtime
+ExecStart=/srv/ngramdb/database/20261020183846-e29da0472f9a2be36f01/.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8765 --workers 1
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ngram-web
+
+[Install]
+WantedBy=multi-user.target

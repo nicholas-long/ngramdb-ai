@@ -1,0 +1,171 @@
+# NgramDB Web
+
+Authenticated React + TypeScript dashboard, FastAPI API, safe file previews,
+React Flow graph, scheduler activity over SSE, and durable Codex task intake.
+This is an ordinary Ngram service node. Node creation uses `ngram create`.
+
+- [Graph and file index](../20261020183847-1fd46fffd14b7dc91e77)
+- [Opt-in Codex worker](../20261020183847-41da3f55465c5c527972)
+- [Example collector](../20261020184448-ff03b1f0dce6debea036)
+- [Example summary](../20261020184448-1807f124753c9185314c)
+- [Specification](../20261020181811-69c80a21731282ab1f3e/WEB-UI-SPEC.md)
+
+## Local setup
+
+From the repository root (Python 3.11+ and Node 20.19+/22.12+):
+
+```bash
+./initialize-web --origin https://ngram.example.internal
+./ngram start
+```
+
+For localhost HTTP development use `./initialize-web --local` instead.
+The root entrypoint is a symlink to the executable Bash script in this web node.
+You can also run `./initialize-web` directly from this directory. Without
+`--origin`, first-time setup prompts for the HTTPS origin. The script installs
+Python dependencies into this node's `.venv`, builds the client, and prompts
+privately for the initial admin password. Use `--username NAME` to choose the
+admin name. Existing configuration is preserved; `--reconfigure` updates the
+login and origin. `--help` lists all options.
+
+The service stays bound to loopback; server access requires the HTTPS reverse
+proxy/VPN described below. Initialization does not install system packages,
+start services, or enable the Codex worker. `run-service` starts just the website.
+The run/service scripts automatically use this node's `.venv` when present;
+`NGRAM_WEB_PYTHON` can override it. `NGRAM_WEB_PORT` defaults to 8765.
+If you override `NGRAM_WEB_STATE` or `NGRAM_WEB_CONFIG` during setup, retain the
+same settings in the service environment. There are no default credentials.
+
+All npm sources, lockfile, `node_modules`, and intermediate build outputs live
+inside **this web node's `client/` directory**. Nothing npm-related is installed
+at the repository root. Ngram excludes `node_modules`, `.venv`, Python bytecode,
+and pytest caches from checksum, executable, and loose-reference discovery.
+The run script hashes frontend sources, uses `npm ci`, checks TypeScript, builds,
+and publishes changed assets before atomically replacing `dist/index.html`.
+An unchanged build does not rewrite outputs. Old hashed assets remain available
+for open browser tabs. Generated dist files and local dependencies are gitignored.
+
+## Private configuration and permissions
+
+`NGRAM_WEB_STATE` defaults to `~/.local/state/ngram-web`. `NGRAM_WEB_CONFIG`
+overrides the default `$NGRAM_WEB_STATE/config.json`. Keep both outside
+`database/`. Configuration contains:
+
+```json
+{
+  "origin": "https://ngram.example.internal",
+  "secureCookies": true,
+  "users": {"alice": {"passwordHash": "<argon2id hash>", "role": "operator"}},
+  "repositories": {"ngramdb": "/srv/ngramdb"},
+  "taskTimeout": 600,
+  "webUid": 1001,
+  "workerUid": 1002
+}
+```
+
+Use `server.configure` to add users and repositories. Roles are `viewer`,
+`operator`, `admin`. Viewers browse the graph and allowed non-secret files;
+operators submit/cancel/review their own tasks; admins can inspect all tasks.
+Private graph access currently applies to the whole configured repository,
+not per-node ACLs. Session IDs rotate on login; sessions expire after eight hours
+and are in memory (one Uvicorn worker). Restarting logs everyone out. Role changes
+and disabled users take effect immediately. Mutations require session CSRF tokens
+and same-origin checks. Login and submission limits are per-process.
+
+For phone access use a private VPN plus an HTTPS reverse proxy. Set `origin`
+to the exact HTTPS origin and `secureCookies` to true; omit `--insecure-local`.
+Only trust forwarded headers from the local proxy. Run the web account with
+read-only graph access and scoped write access to its state/task directories.
+Give the worker a distinct unprivileged account, graph/repository access as needed,
+and explicit shared directory ACLs for tasks and task-output; keep configuration,
+sessions and audit logs inaccessible to untrusted users. The configure command
+creates private files; administrators must provision shared ACLs for distinct
+accounts. Unix permissions and HTTP roles are independent checks.
+
+File access rejects hidden paths, credentials, key files, traversal, symlinks,
+and non-regular files. It walks with `openat`/`O_NOFOLLOW` for race resistance.
+Previews are capped at 256 KiB; CSV at 101 rows. HTML, SVG and other active content
+are downloads, never same-origin executable previews. Markdown disables raw HTML
+and external images; browsers escape text. CSP and nosniff apply to responses.
+
+Anonymous publication is explicit: place approved sanitized files beneath
+`$NGRAM_WEB_STATE/public/<publication>/<file>`. `/public/<publication>/<file>`
+serves those files as attachments using the same path policy. Graph metadata,
+logs, task data and arbitrary world-readable files are not public.
+
+## Activity, index, and lifecycle
+
+The CLI's `run-single` emits started/completed JSONL events with full node ID,
+run ID, host, process ID, duration and actual program exit code. The scheduler also emits pass completion events. A failing run
+returns 1 and does not refresh successful dependency hashes. Events live outside
+the graph in `NGRAM_RUNTIME_DIR` (default `~/.local/state/ngramdb/runtime`).
+The server and scheduler must share this location. Event reads are bounded to
+the last 2 MiB; rotate/archive the log externally for long-running deployments.
+Started events are checked against process liveness on the same host and become
+stale on interruption/expiry; older pre-instrumentation runs remain unknown.
+PID reuse can make liveness ambiguous; statuses are observations, not durable leases.
+
+`refs` now preserves colons in script lines and handles single executable files,
+so JSON/jq expressions do not hide dependencies.
+
+Graph discovery uses fixed argument arrays invoking `ngram query`, `refs`, and
+`query id ID looserefs`, with timeouts and a 15-second cache. `source → target`
+means source depends on or references target, matching CLI semantics. No HTTP
+endpoint accepts arbitrary query operators or shell strings. The index node
+materializes a stable manifest outside the graph on its cron/hook schedule.
+Files themselves are opened fresh on each request, so output changes appear
+without restarting Python or rebuilding React. Global filename manifests can
+lag up to 15 seconds. Full ID routes survive title changes.
+
+Use your supervisor to restart **only the web service** after backend changes;
+there is no production auto-reload. With systemd, use the example service in
+`deploy/ngram-web.service`, set its paths/user/environment, and run
+`systemctl restart ngram-web`. If using `ngram start` to launch the web service,
+restart its child separately after code changes. Never run both launchers on
+the same port. The core Ngram loop does not have to stop for data/UI updates.
+
+## Agent tasks
+
+HTTP intake only writes validated durable queue files; it never launches Codex.
+Task states: queued, running, completed, failed, cancelled, needs-review.
+An `Idempotency-Key` header deduplicates retries for the same user and payload.
+There are at most 20 queued/running tasks, one worker process at a time, a
+configurable timeout (max one hour), cancellation, and a 10 MiB worker log limit.
+Task result/event routes enforce ownership, including polling event logs.
+
+The companion worker is disabled by default. Set distinct `webUid`/`workerUid`
+in private config and launch its `run-service` as `workerUid` with
+`NGRAM_CODEX_WORKER_ENABLED=1`, `NGRAM_WEB_CONFIG`, `NGRAM_WEB_STATE`, and
+`NGRAM_WEB_PYTHON` set. Root and matching web/worker identities are rejected.
+Provision Codex authentication under that account. The installed CLI's
+`codex exec --help` was checked for `--json`, `--sandbox`, `-C`, stdin prompts,
+`--ignore-user-config`, `--ephemeral`, and `--output-last-message`.
+
+Read-only uses the read-only sandbox. Patch mode creates a detached Git worktree,
+uses the workspace-write sandbox, captures tracked/untracked proposed changes,
+and ends in needs-review. The source checkout is not patched. Mark reviewed
+records acknowledgement; it does not apply or merge changes. Review and apply
+through your normal Git workflow. Worktrees/results persist for inspection and
+must be pruned by the administrator after review. Continuation/resume is not exposed.
+After an interrupted worker, running tasks fail rather than replay automatically.
+Actual authenticated Codex execution and cross-user Linux deployment need testing
+in the target environment; automated tests use a fake local Codex executable.
+
+## Verification
+
+```bash
+# In this node
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+npm --prefix client run build
+# In the repository root
+./run-tests
+```
+
+The API exposes `/api/health`, `/api/me`, `/api/nodes`, node detail/refs/files/file,
+`/api/files`, `/api/graph`, `/api/activity`, `/api/events` (SSE), and owner-scoped
+`/api/tasks` with per-task detail/events/cancel/review. API schemas are version 1.
+API docs are disabled on the production HTTP surface. The source tests cover
+roles, cookies, CSRF, origin/body bounds, private/anonymous boundaries, traversal,
+symlinks, Unix access, previews, live output reads, task idempotency/ownership,
+structured failures/stale runs and worker worktree isolation.

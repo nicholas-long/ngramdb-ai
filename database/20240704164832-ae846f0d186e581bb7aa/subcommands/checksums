@@ -21,10 +21,10 @@ function checksumsstream {
 export LC_LOCALE=C # deterministic sort ordering across systems with various localization settings
 
 if [ -z "$1" ]; then
-  find database -type f | checksumsstream
+  find database -type d \( -name node_modules -o -name .venv -o -name __pycache__ -o -name .pytest_cache \) -prune -o -type f -print | checksumsstream
 else
   while [ ! -z "$1" ]; do
-    find "database/$1" -type f | checksumsstream
+    find "database/$1" -type d \( -name node_modules -o -name .venv -o -name __pycache__ -o -name .pytest_cache \) -prune -o -type f -print | checksumsstream
     shift
   done
 fi | sort

@@ -1,0 +1,10 @@
+dist
+.build-hash
+__pycache__/
+.pytest_cache/
+*.pyc
+client/node_modules/
+client/dist/
+stdout.log
+stderr.log
+.venv/

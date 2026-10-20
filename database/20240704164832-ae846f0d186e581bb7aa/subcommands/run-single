@@ -37,8 +37,10 @@ if ! "$ngram_prog" hastag live "$id" ; then # always run program that is tagged 
     "$ngram_prog" dependstats "$id" > "$temprunstats"
     if diff "$temprunstats" "$runstats"; then
       echo "run skipped by optimization: identical dependency conditions" >/dev/stderr
+      rm -f "$temprunstats"
       exit 2
     fi
+    rm -f "$temprunstats"
     # this is not necessary - programs should not be tracking changes to their own output because the hashes are computed after running, and so should only detect actual changes
     ## at this point, we know there are differences in the file, check if all differences are within the target ngram => not rerun
     ## also check for inbox files - those SHOULD trigger a rerun
@@ -76,7 +78,17 @@ fi
 
 # execute program and overwrite output files when finished
 export LC_LOCALE=C # for consistent sort ordering across platforms within nested programs
+event_helper="$ngram_subcommands_dir/../run-event.py"
+run_id="$(date +%s)-$$"
+python3 "$event_helper" "$id" "$run_id" started "$$"
+started_at=$SECONDS
 (cd "$NGRAM_ID_DIR" && ./run) 2> "$stderrfile" | "$ngram_prog" replace "$stdoutfile"
+run_status=${PIPESTATUS[0]}
+python3 "$event_helper" "$id" "$run_id" completed "$$" "$run_status" "$((SECONDS - started_at))"
+if [ "$run_status" != "0" ]; then
+  echo "run failed with exit code $run_status" >&2
+  exit 1
+fi
 "$ngram_prog" dependstats "$id" > "$runstats"
 
 echo "done running Ngram ID $id" >/dev/stderr

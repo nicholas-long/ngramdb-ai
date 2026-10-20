@@ -6,3 +6,6 @@
 **/.hook-ngram-list
 .ngram.tui.rc
 .env
+
+**/__pycache__/
+**/.pytest_cache/

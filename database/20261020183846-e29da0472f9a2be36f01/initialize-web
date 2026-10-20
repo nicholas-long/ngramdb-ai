@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Resolve our own location, including the repository-root symlink.
+set -euo pipefail
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  source_path="$(readlink "$source_path")"
+  case "$source_path" in /*) ;; *) source_path="$source_dir/$source_path" ;; esac
+done
+web_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+root_dir="$(cd "$web_dir/../.." && pwd)"
+
+usage() {
+  cat <<'HELP'
+Usage: ./initialize-web [--origin https://your-server] [--username admin]
+                        [--local] [--reconfigure] [--help]
+
+Creates the web node's .venv, installs Python dependencies, builds the client,
+and interactively creates an admin login if configuration does not exist.
+Without --origin, first-time setup prompts for the website's HTTPS origin.
+--local          Use http://127.0.0.1:8765 and non-Secure cookies for local use.
+--reconfigure    Prompt for a password and update an existing configuration.
+--username NAME  Initial admin username (default: admin).
+
+Run from the Ngram root or web node. Python 3.11+, Node 20.19+/22.12+, and npm
+must already be installed. Passwords are entered privately, never as arguments.
+NGRAM_WEB_STATE/NGRAM_WEB_CONFIG select private configuration outside database/.
+This script does not start services, install system packages, or enable Codex.
+HELP
+}
+fail() { printf 'initialize-web: %s\n' "$*" >&2; exit 1; }
+origin=''
+username=admin
+local_mode=0
+reconfigure=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --origin|--username)
+      option="$1"
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$option needs a value"
+      case "$2" in --*) fail "$option needs a value" ;; esac
+      if [ "$option" = --origin ]; then origin="$2"; else username="$2"; fi
+      shift 2 ;;
+    --local) local_mode=1; shift ;;
+    --reconfigure) reconfigure=1; shift ;;
+    *) fail "Unknown option: $1 (use --help)" ;;
+  esac
+done
+case "$username" in -*) fail "Username must not start with a dash." ;; esac
+[ "${#username}" -le 100 ] || fail "Username must be at most 100 characters."
+command -v python3 >/dev/null || fail 'Install Python 3.11 or newer first.'
+command -v node >/dev/null || fail 'Install Node 20.19+/22.12+ first.'
+command -v npm >/dev/null || fail 'Install npm first.'
+python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || fail 'Python 3.11 or newer is required.'
+node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit((a===20&&b>=19)||(a===22&&b>=12)||a>22 ? 0:1)' || fail 'Node 20.19+/22.12+ is required.'
+
+# Resolve relative overrides before changing directory. Reject graph-local secrets.
+config_path="$(python3 - "$root_dir" <<'PY'
+import os
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+state = Path(os.environ.get('NGRAM_WEB_STATE', str(Path.home() / '.local/state/ngram-web'))).resolve()
+config = Path(os.environ.get('NGRAM_WEB_CONFIG', str(state / 'config.json'))).resolve()
+for path in (state, config):
+    if path.is_relative_to(root / 'database'):
+        raise SystemExit('Keep NGRAM_WEB_STATE and NGRAM_WEB_CONFIG outside database/.')
+print(config)
+PY
+)"
+if [ -n "${NGRAM_WEB_STATE:-}" ]; then
+  export NGRAM_WEB_STATE="$(python3 -c 'import os; from pathlib import Path; print(Path(os.environ["NGRAM_WEB_STATE"]).resolve())')"
+fi
+export NGRAM_WEB_CONFIG="$config_path"
+configure=0
+if [ ! -s "$config_path" ] || [ "$reconfigure" = 1 ]; then
+  configure=1
+  if [ "$local_mode" = 1 ]; then
+    [ -z "$origin" ] || [ "$origin" = http://127.0.0.1:8765 ] || fail '--local uses http://127.0.0.1:8765; omit --origin.'
+    origin=http://127.0.0.1:8765
+  elif [ -z "$origin" ]; then
+    read -r -p 'Website origin (for example https://ngram.example.com): ' origin || fail 'Pass --origin for first-time setup.'
+  fi
+  python3 - "$origin" "$local_mode" <<'PY'
+import sys
+from urllib.parse import urlsplit
+value = sys.argv[1]
+try:
+    url = urlsplit(value)
+    valid = url.hostname and url.port != 0 and not url.username and not url.password and url.path in ('', '/') and not url.query and not url.fragment
+    valid = valid and (url.scheme == 'https' or sys.argv[2] == '1' and value == 'http://127.0.0.1:8765')
+except ValueError:
+    valid = False
+if not valid:
+    raise SystemExit('Use an HTTPS origin without a path, or --local for localhost HTTP.')
+PY
+fi
+
+cd "$web_dir"
+printf 'Installing Python dependencies in %s/.venv\n' "$web_dir"
+if [ ! -x .venv/bin/python ]; then
+  python3 -m venv .venv
+fi
+.venv/bin/python -m pip --disable-pip-version-check install -r requirements.txt
+export NGRAM_WEB_PYTHON="$web_dir/.venv/bin/python"
+printf 'Building frontend in %s/client\n' "$web_dir"
+./run
+if [ "$configure" = 1 ]; then
+  configure_args=("$username" --role admin --repository "ngramdb=$root_dir" --origin "${origin%/}")
+  if [ "$local_mode" = 1 ]; then configure_args+=(--insecure-local); fi
+  "$NGRAM_WEB_PYTHON" -m server.configure "${configure_args[@]}"
+else
+  printf 'Keeping existing configuration: %s (use --reconfigure to update it).\n' "$config_path"
+fi
+printf '\nWeb initialization complete.\n'
+printf 'Start just the website: %q\n' "$web_dir/run-service"
+printf 'Or from the Ngram root: ./ngram start\n'
+if [ -n "${NGRAM_WEB_STATE:-}" ] || [ "$config_path" != "$HOME/.local/state/ngram-web/config.json" ]; then
+  printf 'Keep the same NGRAM_WEB_STATE/NGRAM_WEB_CONFIG settings in your service environment.\n'
+fi

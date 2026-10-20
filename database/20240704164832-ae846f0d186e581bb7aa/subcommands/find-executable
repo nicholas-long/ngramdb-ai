@@ -8,4 +8,6 @@ else
   findcommandmods="-perm +111"
 fi
 
-find "$@" $findcommandmods
+searchroot="$1"
+shift
+find "$searchroot" -type d \( -name node_modules -o -name .venv -o -name __pycache__ -o -name .pytest_cache \) -prune -o \( "$@" $findcommandmods \) -print

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+if [ -z "${NGRAM_WEB_PYTHON:-}" ] && [ -x .venv/bin/python ]; then
+  export NGRAM_WEB_PYTHON="$PWD/.venv/bin/python"
+fi
+"${NGRAM_WEB_PYTHON:-python3}" -m server.build

@@ -22,6 +22,9 @@ else # run single
 fi
 
 didntrunanything=1
+run_failed=0
+pass_started=$SECONDS
+pass_id="pass-$(date +%s)-$$"
 
 # clean up file hash tracking for crons that have not run for a while so they rerun
 depends=$(mktemp)
@@ -51,8 +54,11 @@ echo done checking crons... >/dev/stderr
 for id in $( "$ngram_prog" find-executable database -type f -name run | awk -F / 'NF == 3 { print $2 }' | sort -u | xargs "$ngram_prog" tsort); do
   if ! "$ngram_prog" hastag template "$id"; then
     "$ngram_prog" run-single "$id"
-    if [ "$?" = "0" ]; then
+    run_result=$?
+    if [ "$run_result" = "0" ]; then
       didntrunanything=0
+    elif [ "$run_result" = "1" ]; then
+      run_failed=1
     fi
   fi
 done
@@ -67,12 +73,16 @@ for id in $( cat "$hooks" ); do
   if ! cmp "$temp" "$hookfile"; then
     cp "$temp" "$hookfile"
     "$ngram_prog" run-single "$id"
-    if [ "$?" = "0" ]; then
+    run_result=$?
+    if [ "$run_result" = "0" ]; then
       didntrunanything=0
+    elif [ "$run_result" = "1" ]; then
+      run_failed=1
     fi
   fi
 done
 rm "$hooks"
 if [ -f "$temp" ]; then rm "$temp"; fi # temp file may or may not have been moved
 
+python3 "$ngram_subcommands_dir/../run-event.py" "" "$pass_id" pass_completed "$$" "$run_failed" "$((SECONDS - pass_started))"
 exit $didntrunanything

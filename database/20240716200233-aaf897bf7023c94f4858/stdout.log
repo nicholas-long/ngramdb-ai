@@ -21,10 +21,9 @@ possible hastag usages:
 List of all tags:
 common-algo
 complete
+cron-five
 example
 experiment
-file
-list
 live
 needs-hooks
 ngram-hook-add

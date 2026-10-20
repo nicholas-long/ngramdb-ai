@@ -7,6 +7,8 @@ graph TD;
   automatically_generated_README_for_this_project --> list_of_templates;
   automatically_generated_README_for_this_project --> list_of_special_tags;
   subcommand_help_implementation_status --> subcommand_implementations;
-  web_server_for_API --> list_of_data_files_for_serving_as_static_content;
   list_of_special_tags --> subcommand_implementations;
+  NgramDB_graph_and_file_index --> NgramDB_Web;
+  Codex_task_worker_(opt-in) --> NgramDB_Web;
+  Example_transformation:_health_summary --> Example_collector:_local_pipeline_health;
 ```
