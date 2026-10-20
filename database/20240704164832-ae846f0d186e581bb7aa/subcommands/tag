@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# get or alter the tags of a data set
+
+delete=0
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -l|--list) # list tags for ID
+      shift # pop arg
+      tagfile="database/$1/$NGRAM_TAG_FILE"
+      [ -f "$tagfile" ] && cat "$tagfile"
+      ;;
+    -t|--tag) # add tag
+      shift # pop arg
+      export settag="$1"
+      # TODO: check tag format is alphanumeric
+      ;;
+    -d|--delete) # remove a tag (passed as argument after)
+      delete=1
+      shift
+      export settag="$1"
+      # TODO: check tag format is alphanumeric
+      ;;
+    -v|--verbose)
+      VERBOSE=1
+      ;;
+    -h|--help)
+      echo "Usage: ngram tag [ options ] directory"
+      echo "Options:"
+      cat "$0" | grep '^\s\+-.|--.*'
+      exit 1
+      ;;
+    *)
+      id="$1"
+      # set tag of id to $tag
+      tagfile="database/$id/$NGRAM_TAG_FILE"
+      if [ ! -z "$settag" ]; then
+        if [ "$delete" = "0" ]; then
+          if [ -f "$tagfile" ]; then
+            cat "$tagfile" | awk '
+              { seen[$1]=1 }
+              { print }
+              END { if (!seen[ENVIRON["settag"]]) print ENVIRON["settag"] }
+            ' | ./ngram replace "$tagfile"
+          else
+            echo $settag > "$tagfile"
+          fi
+        else # delete a tag
+          echo "deleting tag $settag" >/dev/stderr
+          awk '$1 != ENVIRON["settag"]' "$tagfile" | "$ngram_prog" replace "$tagfile"
+        fi
+      else
+        echo what tag > /dev/stderr
+        exit 2
+      fi
+    ;;
+  esac
+  shift
+done
+

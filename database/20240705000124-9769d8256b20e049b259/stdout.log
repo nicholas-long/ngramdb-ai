@@ -1,0 +1,16 @@
+running tests
+ALL TESTS PASSED!
+SUCCESS test changetitle
+SUCCESS test customdate-id
+SUCCESS test dependencies-match-refs
+SUCCESS test empty-union
+SUCCESS test graphquery-cats
+SUCCESS test reftest
+SUCCESS test settags
+SUCCESS test sorted-vs-tsorted
+SUCCESS test test-graph-refs
+SUCCESS test testclone
+SUCCESS test testcreate
+SUCCESS test testquery
+SUCCESS test topographical-sort-test
+SUCCESS test unique-ids

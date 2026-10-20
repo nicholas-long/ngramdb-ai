@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# find refs by ID
+# pass --all as parameter to get table of all refs
+# pass --type "type" parameter to filter only references containing a certain string on the same line - used for types of relationships
+if [ -z "$1" ]; then
+  echo missing argument >/dev/stderr
+fi
+typeparam=""
+
+while [ ! -z "$1" ]; do
+  if [ "$1" = "--all" ]; then
+    grep -Eof <(ls database) $(cat $exelist) | awk -F : '
+      BEGIN{OFS=" "}
+      {
+        gsub(/^database./,"",$1)
+        gsub(/\/.*/,"",$1)
+      }
+      $1 != $2 && !seen[$1,$2] { print $1, $2 }
+      { seen[$1,$2] = 1 }
+    '
+  elif [ "$1" = "--type" ]; then
+    shift
+    typeparam="$1"
+  else
+    exelist=$(mktemp)
+    "$ngram_prog" find-executable "database/$1" -type f > "$exelist"
+    if [ ! -s "$exelist" ]; then # if list of executables is empty
+      exit 0 # nothing to search
+    fi
+    searchfile=$(mktemp)
+    ls database | grep -v "$1" > "$searchfile"
+    if [ -z "$typeparam" ]; then # no optional type parameter for refs
+      grep -E '[0-9]{14}-[0-9a-f]{20}' $(cat "$exelist") | cut -d : -f 2 | grep -of "$searchfile" | sort -u
+    else
+      grep -f "$searchfile" $(cat "$exelist") | cut -d : -f 2 | grep "$typeparam" | grep -of "$searchfile" | sort -u
+    fi
+    rm "$searchfile"
+    rm "$exelist"
+  fi
+  shift # pop arg from arg list
+done

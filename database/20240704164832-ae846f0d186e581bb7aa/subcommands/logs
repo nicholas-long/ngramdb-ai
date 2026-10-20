@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# retrieve all run logs for an Ngram ID
+
+id="$1"
+outputfile="database/$id/stdout.log"
+errfile="database/$id/stderr.log"
+
+function printlogfile {
+  if [ -f "${1}.gz" ]; then
+    cat "${1}.gz" | gzip -d -
+  fi
+  if [ -f "$1" ]; then
+    echo ">>>>>>>>>> RUN $2 STARTED" $(date -r "$1")
+    cat "$1"
+  fi
+}
+
+printlogfile "$errfile" STDOUT >/dev/stderr
+printlogfile "$outputfile" STDERR

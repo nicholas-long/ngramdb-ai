@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# entrypoint to run one single cycle of ngram.
+# one cycle is defined as one pass over all IDs with programs that have dependencies that have changed since the last time the program was run.
+# returns a status code of 1 if nothing was run
+if [ "$1" == "--until-stable" ]; then
+  while [ 1 ]; do
+    echo Looping $(date)
+    "$ngram_prog" run --single
+    if [ "$?" != "0" ]; then
+      exit 0
+    fi
+  done
+elif [ "$1" = "--run-all" ]; then
+  find database -name .ngram.dependencies.hashes | xargs rm # clear all hashes of all elements
+  "$ngram_prog" run --until-stable
+elif [ -z "$1" ]; then # base case - no parameter given, run
+  find $("$ngram_prog" query @live dirs) -name .ngram.dependencies.hashes | xargs rm # clear all hashes of live elements
+  "$ngram_prog" run --until-stable
+else # run single
+  echo "running single stage at $(date)" >/dev/stderr
+fi
+
+didntrunanything=1
+
+# clean up file hash tracking for crons that have not run for a while so they rerun
+depends=$(mktemp)
+echo checking crons... >/dev/stderr
+"$ngram_prog" query @cron-daily dirs > $depends
+if [ -s "$depends" ]; then
+  for f in $(find $(cat $depends) -name .ngram.dependencies.hashes -mmin +1440); do
+    rm "$f"
+  done
+fi
+"$ngram_prog" query @cron-hourly dirs > $depends
+if [ -s "$depends" ]; then
+  for f in $(find $(cat $depends) -name .ngram.dependencies.hashes -mmin +60); do
+    rm "$f"
+  done
+fi
+"$ngram_prog" query @cron-five dirs > $depends
+if [ -s "$depends" ]; then
+  for f in $(find $(cat $depends) -name .ngram.dependencies.hashes -mmin +5); do
+    rm "$f"
+  done
+fi
+rm "$depends"
+echo done checking crons... >/dev/stderr
+
+# run all IDs in topological order
+for id in $( "$ngram_prog" find-executable database -type f -name run | awk -F / 'NF == 3 { print $2 }' | sort -u | xargs "$ngram_prog" tsort); do
+  if ! "$ngram_prog" hastag template "$id"; then
+    "$ngram_prog" run-single "$id"
+    if [ "$?" = "0" ]; then
+      didntrunanything=0
+    fi
+  fi
+done
+
+# keep track of lists of Ngram IDs within Ngrams tagged ngram-hook-add
+hooks=$(mktemp)
+temp=$(mktemp)
+"$ngram_prog" ls | sort -u > "$temp"
+"$ngram_prog" query @ngram-hook-add > "$hooks"
+for id in $( cat "$hooks" ); do
+  hookfile="database/$id/.hook-ngram-list"
+  if ! cmp "$temp" "$hookfile"; then
+    cp "$temp" "$hookfile"
+    "$ngram_prog" run-single "$id"
+    if [ "$?" = "0" ]; then
+      didntrunanything=0
+    fi
+  fi
+done
+rm "$hooks"
+if [ -f "$temp" ]; then rm "$temp"; fi # temp file may or may not have been moved
+
+exit $didntrunanything

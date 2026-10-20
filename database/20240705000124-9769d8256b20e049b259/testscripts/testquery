@@ -1,0 +1,39 @@
+#!/bin/bash
+
+set -o pipefail
+cliscripts="20240704164832-ae846f0d186e581bb7aa" # include a reference to the main program directory in here
+# find all things referenced by things which have the ngram-internal tag, which do not contain the tag test. check if it contains known ID value for CLI scripts.
+if ! ngram query @ngram-internal not <( ngram query @test ) | grep "$cliscripts"; then
+  echo query including not failed
+  exit 1
+fi
+# find all things referenced by things which have the ngram-internal tag, which do not contain the tag test. check if it contains known ID value for CLI scripts.
+if ! ngram query @ngram-internal not @test | grep "$cliscripts"; then
+  echo query including not failed without filename
+  exit 1
+fi
+
+if [ $(ngram query @ngram-internal @test | wc -l) != $(ngram query @test @ngram-internal | wc -l) ]; then
+  echo "query didn't match tags regardless of ordering"
+  exit 1
+fi
+
+# i don't like this test because it's an exact count
+#if [ $(ngram query @subcommand union @test | wc -l) != "2" ]; then
+#  echo "union didn't work"
+#  exit 1
+#fi
+
+# check that all things that are internal tests have references to the CLI implementation
+if ! ngram query @ngram-internal @test refs | grep "$cliscripts"; then
+  echo failed check that all things that are internal tests have references to the CLI implementation
+  exit 1
+fi
+
+# check that the results produced by this query are unique
+totalcount=$(ngram query @ngram-internal @test refs | grep "$cliscripts" | wc -l)
+uniquecount=$(ngram query @ngram-internal @test refs | grep "$cliscripts" | sort -u | wc -l)
+if [ "$totalcount" != "$uniquecount" ]; then
+  echo failed check that the results produced by this query are unique
+  exit 1
+fi

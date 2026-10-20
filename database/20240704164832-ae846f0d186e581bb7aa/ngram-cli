@@ -1,0 +1,54 @@
+#!/bin/bash
+
+export ngram_run_dir="$(pwd)"
+export ngram_script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+export ngram_cli_path="$(realpath $0)"
+export ngram_root_dir=$(echo "$ngram_cli_path" | awk -F / '{OFS="/";NF-=3;print}')
+export ngram_prog="$ngram_root_dir/ngram"
+export PATH="$PATH:$ngram_root_dir"
+export NGRAM_TAG_FILE="tags.ngram"
+
+# constants
+export ngram_program_id="20240704164832-ae846f0d186e581bb7aa"
+export ngram_subcommands_dir="$ngram_root_dir/database/$ngram_program_id/subcommands"
+
+command="$1"
+shift
+if [ -z "$command" ]; then
+  echo missing command
+  exit 1
+fi
+
+command_prog="$ngram_subcommands_dir/$command"
+
+if [[ "$command" =~ -h|--help ]]; then
+  echo "Usage: $(basename $0)  [subcommand] [--help | options... ]"
+  echo "Subcommands:"
+  ls "$ngram_subcommands_dir"
+  exit 1
+elif [ ! -x "$command_prog" ]; then
+  if [ "$command" = "ls" ]; then
+    command="list"
+  elif [ "$command" = "t" ]; then
+    if [ ! -z "$NGRAM_ID" ]; then
+      echo "tagging $NGRAM_ID as $1" >/dev/stderr
+      "$ngram_prog" tag -t "$1" "$NGRAM_ID"
+      exit 0
+    else
+      echo "this shortcut does not work unless you are in a venv or running as a script" >/dev/stderr
+    fi
+    #command="list"
+  else
+    echo "error no_subcommand $command" >/dev/stderr
+    exit 1
+  fi
+  command_prog="$ngram_subcommands_dir/$command"
+fi
+
+cd $ngram_root_dir
+
+if [ -f .env ]; then
+  source .env
+fi
+
+"$command_prog" "$@"

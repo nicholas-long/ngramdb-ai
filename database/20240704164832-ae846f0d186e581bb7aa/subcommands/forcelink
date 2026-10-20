@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# force a link from ID in arg 1 to arg 2.
+# do this by adding IDs to a data file that is marked executable
+
+from="$1"
+to="$2"
+if [ -z "$from" ]; then
+  echo missing to argument '#1'
+  exit 1
+fi
+if [ -z "$to" ]; then
+  echo missing to argument '#2'
+  exit 1
+fi
+linktype="$3"
+linkfile="database/$from/.link"
+if [ -z "$linktype" ]; then
+  echo "$2" >> "$linkfile"
+else
+  echo "$linktype $2" >> "$linkfile"
+fi
+if [ ! -x "$linkfile" ] ; then
+  chmod +x "$linkfile" # mark as executable so it gets picked up for references
+fi
+
+

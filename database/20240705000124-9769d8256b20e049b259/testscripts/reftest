@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# test that references work in executable files
+
+testscripts="20240705000124-9769d8256b20e049b259"
+cliscripts="20240704164832-ae846f0d186e581bb7aa" # include a reference to the main program directory in here
+
+set -o pipefail
+./ngram refs "$testscripts" | grep "$cliscripts"
+if [ "$?" != "0" ]; then
+  echo could not find cli script in references of test scripts, which it should be included in
+  exit 1
+fi
+uniquerefcount=$(./ngram refs "$testscripts" | grep "$cliscripts" | wc -l | awk '{print $NF}')
+if [ "$uniquerefcount" != "1" ]; then
+  echo unique ref test failed - multiple copies of same reference
+  exit 1
+fi

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# launch a virtual environment where all shell variables are defined to support the ngram CLI
+# optional ID parameter or --latest to specify an ID for a working directory
+
+if [ -z "$SHELL" ]; then
+  echo "no shell specified in SHELL env variable" >/dev/stderr
+  exit 1
+fi
+
+if [ "$1" = "--latest" ]; then
+  lastid=$(ls database | tail -n 1)
+  "$ngram_prog" venv "$lastid"
+  exit 0
+elif [ ! -z "$1" ]; then # run it as if we are running within the environment
+  export NGRAM_ID="$1"
+  export NGRAM_ID_DIR="database/$1"
+  cd "database/$1"
+fi
+
+"$SHELL" -i

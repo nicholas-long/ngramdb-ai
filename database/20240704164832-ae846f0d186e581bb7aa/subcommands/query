@@ -1,0 +1,190 @@
+#!/bin/bash
+
+# perform graph queries with graph links, tags, and JSON data within Ngram.
+# this is a reverse polish notation machine that performs queries across a graph by using operators from set theory and refrences between IDs.
+# starting with all IDs, apply successive operations until desired nodes are reached or the working set becomes empty.
+
+workingset=$(mktemp)
+next=$(mktemp)
+if [ -z "$workingset" ]; then exit 1; fi # failed to allocate temp file
+ls database > $workingset
+if [ -z "$VERBOSE" ]; then VERBOSE=0; fi
+while [[ $# -gt 0 ]]; do
+  if [ "$1" != "union" ]; then # skip this optimization if the next command is a union
+    if [ ! -s "$workingset" ]; then # exit early if the working set becomes empty
+      rm "$workingset"
+      exit 1
+    fi
+  fi
+  case $1 in
+    -v) # verbose
+      export VERBOSE=1
+      ;;
+    --human) # TODO: print results in human format with titles
+      human=1
+      shift
+      "$ngram_prog" query "$@" | awk '
+      { 
+        command = "head -n 1 database/" $1 "/README.md 2>/dev/null"
+        if (!(command | getline title)) { title="---" }
+        gsub(/^#* /, "", title)
+        print $0, title
+        close(command)
+      }
+      '
+      rm "$workingset"
+      exit 0
+      ;;
+    @*) # search by tag with `ngram query @tag`
+      export tag="$1"
+      if [ "$VERBOSE" != 0 ]; then
+        echo "looking for $tag" >/dev/stderr
+      fi
+      # TODO: could use an index
+      awk '
+        BEGIN { tag = ENVIRON["tag"]; gsub(/@/,"",tag) }
+        $0 == tag { print FILENAME | "cut -d / -f 2" }
+      ' $("$ngram_prog" tagfiles) | grep -f "$workingset" > "$next"
+      mv "$next" "$workingset"
+      ;;
+    refs) # get refs from the current working set
+      cat "$workingset" | xargs -n 1 "$ngram_prog" refs | sort -u > "$next"
+      mv "$next" "$workingset"
+      ;;
+    refstype) # get refs from the current working set that match a certain string - used for types of links
+      shift
+      cat "$workingset" | xargs -n 1 "$ngram_prog" refs --type "$1" | sort -u > "$next"
+      mv "$next" "$workingset"
+      ;;
+    looserefs) # get loose refs (not required to be executable) from the current working set
+      for id in $(cat $workingset); do
+        grep -of <($ngram_prog list | grep -v "$id") $(find "database/$id" -type f | awk '!/\.(bmp|mp4|mov|qt|webm|gz)$/') | awk -F : '{print $NF}'
+      done | sort -u > "$next"
+      mv "$next" "$workingset"
+      ;;
+    refsto) # get all refs to the current working set
+      cat "$workingset" | xargs -n 1 "$ngram_prog" findrefsto | sort -u > "$next"
+      mv "$next" "$workingset"
+      ;;
+    id) # use a single ID as the new working set, 1 parameter
+      shift
+      echo "$1" > "$workingset"
+      ;;
+    not) # set difference - remove things occuring in the following tag, file, or subcommand argument
+      shift
+      if [[ "$1" =~ @.* ]]; then
+        grep -vf <($ngram_prog query $1) "$workingset" > "$next"
+        mv "$next" "$workingset"
+      else
+        grep -vf "$1" "$workingset" > "$next"
+        mv "$next" "$workingset"
+      fi
+      ;;
+    union) # union working set with another
+      shift
+      if [[ "$1" =~ @.* ]]; then
+        cat <($ngram_prog query $1) "$workingset" | sort -u > "$next"
+        mv "$next" "$workingset"
+      else
+        cat "$workingset" "$1" | sort -u > "$next"
+        mv "$next" "$workingset"
+      fi
+      ;;
+    filterjson) # filter workingset by json parameters using jq select syntax
+      shift
+      query="$1"
+      for id in $(cat "$workingset"); do
+        jsonfile="database/$id/data.json"
+        if [ -f "$jsonfile" ]; then
+          cat "$jsonfile" | jq -c "select( $query )" >/dev/stderr
+          result=$(cat "$jsonfile" | jq -c "select( $query )" | wc -l | awk '{print $1}')
+          if [ "$result" != "0" ]; then
+            echo $id
+          fi
+        fi
+      done | sort -u > "$next"
+      mv "$next" "$workingset"
+      ;;
+    json) # return all data.json files in the working set appended together as a JSON array
+      for id in $(cat "$workingset"); do
+        jsonfile="database/$id/data.json"
+        if [ -f "$jsonfile" ]; then
+          cat "$jsonfile" | jq -c "._ngram_id=\"$id\""
+        fi
+      done | jq -c -s . | if [ ! -z "$2" ]; then
+        jq -c $3 $4 "$2"
+      else
+        cat
+      fi
+      rm "$workingset"
+      exit 0 # printing JSON breaks the normal flow of printing IDs
+      ;;
+    jsonset) # set a json field value, 2 required parameters after
+      shift
+      field="$1"
+      shift
+      value="$1"
+      if [ -z "$field" ]; then
+        echo missing field >/dev/stderr
+        rm "$workingset"
+        exit 1
+      fi
+      if [ -z "$value" ]; then
+        echo missing value >/dev/stderr
+        rm "$workingset"
+        exit 1
+      fi
+      numeric=""
+      if [ "$2" == "-n" ]; then
+        shift
+        numeric="$1"
+      fi
+      for id in $(cat "$workingset"); do
+        "$ngram_prog" jsonset "$id" "$field" "$value" "$numeric"
+      done
+      ;;
+    expand) # expand all references into functional group
+      et=$(mktemp)
+      cat "$workingset" > "$et"
+      lastcount=0
+      count=$(wc -l $et | awk '{print $1}')
+      stop=0
+      while [ "$stop" = "0" ]; do
+        echo "expanding count $count" >/dev/stderr
+        if [ "$count" = "$lastcount" ]; then
+          stop=1
+        fi
+        "$ngram_prog" query "$et" union <( "$ngram_prog" query "$et" refs ) union <( "$ngram_prog" query "$et" refsto ) > "$next"
+        mv "$next" "$et"
+        lastcount="$count"
+        count=$(wc -l $et | awk '{print $1}')
+      done
+      mv "$et" "$workingset"
+      ;;
+    dirs) # utility operator to return the entire current working set as directory paths
+      awk '{ print "database/" $NF }' "$workingset"
+      rm "$workingset"
+      exit 0
+      ;;
+    -h|--help) # print help text
+      echo "RPN graph query language implementation for Ngram"
+      echo "Usage: $(basename $ngram_prog) $(basename $0)  [ options ] directory"
+      echo "Options:"
+      cat "$0" | grep '^\s\+-.|--.*'
+      echo "operators"
+      awk '
+        /case/,/esac/ { printing = 1 }
+        printing && / +[a-z]+\) #/ { gsub(/) #/, " -"); print }
+      ' "$0"
+      rm "$workingset"
+      exit 1
+      ;;
+    *) # filename parameter or subquery implemented with bash filename redirection
+      grep -f "$1" "$workingset" > "$next"
+      mv "$next" "$workingset"
+      ;;
+  esac
+  shift
+done
+cat "$workingset"
+rm "$workingset"

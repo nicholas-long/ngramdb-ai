@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# overwrite main readme file
+# for now while this is not running in a container, this will work
+set -o pipefail
+READMEFILE="$ngram_root_dir/README.md"
+echo "writing readme file $READMEFILE" >/dev/stderr
+cd $(dirname $0)
+
+function generate_readme {
+  cat header.md 
+  echo
+  echo
+  echo '# Active Data Pipelines in the System'
+  echo
+  echo Updating markdown graph of connections.
+  echo
+  cat ../20240710043728-86ad27b18da4fa187615/graph.md
+  echo
+  cat ../20240714155320-1778aa12b5a4c500a58c/templates.md # print list of templates
+  echo
+  echo '```bash'
+  echo '$' ngram --help
+  ngram --help 
+  echo '```'
+  echo
+  cat subcommands_in_order > subcommands
+  ls "../20240704164832-ae846f0d186e581bb7aa/subcommands" | grep -v 'find-executable' | grep -vf subcommands_in_order >> subcommands
+  for subcommand in $(cat subcommands); do
+    echo "processing $subcommand" >/dev/stderr
+    # ignore find-executable because it does not work with --help
+    echo "## subcommand: $subcommand"
+    echo ""
+    awk '/TODO/ { next } /^##* / { gsub(/^##* /, ""); print "-", $0 }' "../20240704164832-ae846f0d186e581bb7aa/subcommands/$subcommand"
+    echo ""
+    if grep '.--help' "../20240704164832-ae846f0d186e581bb7aa/subcommands/$subcommand" | cut -d : -f 1 | awk -F / '{print $NF}' | sort -u >/dev/null; then
+      echo '```bash'
+      echo '$' ngram "$subcommand" --help
+      ngram "$subcommand" --help 2>&1
+      echo '```'
+    fi
+    if [ "$subcommand" = "query" ]; then
+      cat querypromptexamples.md
+    fi
+  done
+  echo
+  cat about.md
+  echo
+  cat ../20240716200233-aaf897bf7023c94f4858/README.md # include special tags
+  echo
+  echo '# Test Run Output'
+  echo
+  echo '```'
+  cat ../20240705000124-9769d8256b20e049b259/stdout.log
+  echo '```'
+  echo
+  cat footer.md
+  cat ../../LICENSE
+}
+
+generate_readme | ngram replace "$READMEFILE"
+
+echo Total Lines
+wc -l "$READMEFILE" | awk '{print $1}'
