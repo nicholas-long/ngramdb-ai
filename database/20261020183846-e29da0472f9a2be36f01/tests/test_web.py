@@ -271,10 +271,27 @@ def test_worker_stops_process_group(env,monkeypatch,tmp_path,reason):
     assert result['exitCode']!=0
 
 
-def test_worker_requires_separate_identity(env,monkeypatch):
+@pytest.mark.parametrize('legacy_uids',[False,True])
+def test_worker_starts_as_website_user(env,monkeypatch,legacy_uids):
     monkeypatch.setenv('NGRAM_CODEX_WORKER_ENABLED','1')
-    with pytest.raises(SystemExit, match='distinct webUid and workerUid'):
+    if legacy_uids:
+        data=config.settings()
+        data.update(webUid=os.getuid(),workerUid=os.getuid())
+        config.atomic(config.CONFIG,data)
+    monkeypatch.setattr(worker.signal,'signal',lambda *args:None)
+    class IdleWorker(Exception):pass
+    def idle(seconds):raise IdleWorker()
+    monkeypatch.setattr(worker.time,'sleep',idle)
+    with pytest.raises(IdleWorker):
         worker.main()
+    assert (env[3]/'worker.lock').exists()
+
+
+def test_worker_remains_opt_in(env,monkeypatch,capsys):
+    monkeypatch.delenv('NGRAM_CODEX_WORKER_ENABLED',raising=False)
+    worker.main()
+    assert 'worker disabled' in capsys.readouterr().out
+    assert not (env[3]/'worker.lock').exists()
 
 
 def test_sse_delivery_and_revocation(env,monkeypatch):

@@ -70,11 +70,8 @@ def execute(task):
 
 def main():
     if os.environ.get('NGRAM_CODEX_WORKER_ENABLED') != '1':
-        print('Codex worker disabled; set NGRAM_CODEX_WORKER_ENABLED=1 under a dedicated account.')
+        print('Codex worker disabled; set NGRAM_CODEX_WORKER_ENABLED=1 to enable it.')
         return
-    policy = settings()
-    if policy.get('workerUid') != os.getuid() or policy.get('webUid') in (None, os.getuid()) or os.getuid() == 0:
-        raise SystemExit('Configure distinct webUid and workerUid; run the worker as workerUid (non-root)')
     def stop(signum, frame):
         raise SystemExit(128 + signum)
     signal.signal(signal.SIGTERM, stop)

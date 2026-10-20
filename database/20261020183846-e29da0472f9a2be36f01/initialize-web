@@ -9,6 +9,7 @@ while [ -L "$source_path" ]; do
 done
 web_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
 root_dir="$(cd "$web_dir/../.." && pwd)"
+repository_name="${root_dir##*/}"
 
 usage() {
   cat <<'HELP'
@@ -107,7 +108,7 @@ export NGRAM_WEB_PYTHON="$web_dir/.venv/bin/python"
 printf 'Building frontend in %s/client\n' "$web_dir"
 ./run
 if [ "$configure" = 1 ]; then
-  configure_args=("$username" --role admin --repository "ngramdb=$root_dir" --origin "${origin%/}")
+  configure_args=("$username" --role admin --repository "$repository_name=$root_dir" --origin "${origin%/}")
   if [ "$local_mode" = 1 ]; then configure_args+=(--insecure-local); fi
   "$NGRAM_WEB_PYTHON" -m server.configure "${configure_args[@]}"
 else

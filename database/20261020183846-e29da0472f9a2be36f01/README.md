@@ -25,7 +25,8 @@ You can also run `./initialize-web` directly from this directory. Without
 `--origin`, first-time setup prompts for the HTTPS origin. The script installs
 Python dependencies into this node's `.venv`, builds the client, and prompts
 privately for the initial admin password. Use `--username NAME` to choose the
-admin name. Existing configuration is preserved; `--reconfigure` updates the
+admin name. The repository selector name comes from the Ngram root folder
+(for this checkout, `ngramdb-ai`). Existing configuration is preserved; `--reconfigure` updates the
 login and origin. `--help` lists all options.
 
 The service stays bound to loopback; server access requires the HTTPS reverse
@@ -56,10 +57,8 @@ overrides the default `$NGRAM_WEB_STATE/config.json`. Keep both outside
   "origin": "https://ngram.example.internal",
   "secureCookies": true,
   "users": {"alice": {"passwordHash": "<argon2id hash>", "role": "operator"}},
-  "repositories": {"ngramdb": "/srv/ngramdb"},
-  "taskTimeout": 600,
-  "webUid": 1001,
-  "workerUid": 1002
+  "repositories": {"ngramdb-ai": "/srv/ngramdb-ai"},
+  "taskTimeout": 600
 }
 ```
 
@@ -74,13 +73,13 @@ and same-origin checks. Login and submission limits are per-process.
 
 For phone access use a private VPN plus an HTTPS reverse proxy. Set `origin`
 to the exact HTTPS origin and `secureCookies` to true; omit `--insecure-local`.
-Only trust forwarded headers from the local proxy. Run the web account with
-read-only graph access and scoped write access to its state/task directories.
-Give the worker a distinct unprivileged account, graph/repository access as needed,
-and explicit shared directory ACLs for tasks and task-output; keep configuration,
-sessions and audit logs inaccessible to untrusted users. The configure command
-creates private files; administrators must provision shared ACLs for distinct
-accounts. Unix permissions and HTTP roles are independent checks.
+Only trust forwarded headers from the local proxy. The web service and Codex
+worker can run as the same Unix user, sharing the same private configuration
+and state directory. No extra Unix account or shared ACL setup is required.
+Keep configuration, task outputs and audit logs inaccessible to other users.
+The worker needs access to the allowlisted repositories and writes patch
+proposals into isolated worktrees. HTTP roles still control task submission
+and ownership; Codex sandbox modes still govern task execution.
 
 File access rejects hidden paths, credentials, key files, traversal, symlinks,
 and non-regular files. It walks with `openat`/`O_NOFOLLOW` for race resistance.
@@ -133,11 +132,23 @@ There are at most 20 queued/running tasks, one worker process at a time, a
 configurable timeout (max one hour), cancellation, and a 10 MiB worker log limit.
 Task result/event routes enforce ownership, including polling event logs.
 
-The companion worker is disabled by default. Set distinct `webUid`/`workerUid`
-in private config and launch its `run-service` as `workerUid` with
-`NGRAM_CODEX_WORKER_ENABLED=1`, `NGRAM_WEB_CONFIG`, `NGRAM_WEB_STATE`, and
-`NGRAM_WEB_PYTHON` set. Root and matching web/worker identities are rejected.
-Provision Codex authentication under that account. The installed CLI's
+The companion worker is disabled by default. Run it as the same user as the
+website. From the repository root, in another terminal:
+
+```bash
+NGRAM_CODEX_WORKER_ENABLED=1 ./database/20261020183847-41da3f55465c5c527972/run-service
+```
+
+With the default setup it uses the same `~/.local/state/ngram-web` state and
+configuration and the web node's `.venv` automatically. If you customized
+`NGRAM_WEB_CONFIG` or `NGRAM_WEB_STATE` for the website, export the same values
+in this terminal. `webUid` and `workerUid` are not required; legacy fields are
+ignored. For a persistent deployment set `NGRAM_CODEX_WORKER_ENABLED=1` in the
+worker's service environment. Alternatively set it before `./ngram start` to
+launch the worker alongside the website. Codex must be installed on PATH and
+authenticated for this user.
+
+The installed CLI's
 `codex exec --help` was checked for `--json`, `--sandbox`, `-C`, stdin prompts,
 `--ignore-user-config`, `--ephemeral`, and `--output-last-message`.
 
@@ -148,8 +159,7 @@ records acknowledgement; it does not apply or merge changes. Review and apply
 through your normal Git workflow. Worktrees/results persist for inspection and
 must be pruned by the administrator after review. Continuation/resume is not exposed.
 After an interrupted worker, running tasks fail rather than replay automatically.
-Actual authenticated Codex execution and cross-user Linux deployment need testing
-in the target environment; automated tests use a fake local Codex executable.
+Actual authenticated Codex execution needs testing in the target environment; automated tests use a fake local Codex executable.
 
 ## Verification
 
