@@ -1,5 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-filesizes="$PWD/filesizes.csv"
-cd "$ngram_root_dir"
-du -hs database/* | sort -hr | awk '{print $1 "," $2}' > $filesizes
+import csv
+import io
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+output = Path.cwd() / 'filesizes.csv'
+root = Path(os.environ['ngram_root_dir'])
+sizes = subprocess.check_output(
+    ['du', '-hs', *sorted(str(path.relative_to(root)) for path in (root / 'database').iterdir())],
+    cwd=root,
+)
+sorted_sizes = subprocess.check_output(['sort', '-hr'], input=sizes).decode()
+result = io.StringIO(newline='')
+writer = csv.writer(result, lineterminator='\n')
+for row in sorted_sizes.splitlines():
+    size, directory = row.split('\t', 1)
+    readme = root / directory / 'README.md'
+    title = ''
+    if readme.is_file():
+        with readme.open(encoding='utf-8', errors='replace') as source:
+            for line in source:
+                heading = re.match(r'^ {0,3}#{1,6}\s+(.+?)\s*$', line)
+                if heading:
+                    title = re.sub(r'\s+#+\s*$', '', heading.group(1))
+                    break
+    writer.writerow([size, directory, title])
+
+content = result.getvalue()
+if not output.exists() or output.read_text() != content:
+    with tempfile.NamedTemporaryFile(mode='w', dir=output.parent, delete=False) as staged:
+        staged.write(content)
+    os.replace(staged.name, output)
