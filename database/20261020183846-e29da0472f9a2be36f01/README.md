@@ -222,3 +222,21 @@ API docs are disabled on the production HTTP surface. The source tests cover
 roles, cookies, CSRF, origin/body bounds, private/anonymous boundaries, traversal,
 symlinks, Unix access, previews, live output reads, task idempotency/ownership,
 structured failures/stale runs and worker worktree isolation.
+
+## Preview, console, tags and reruns
+
+File previews support gzip (`.gz`) text, Markdown, JSON/JSONL and CSV files.
+Decompression stops after 256 KiB plus one byte; larger previews are marked
+truncated. Downloads preserve the original compressed file. Damaged gzip files
+return a preview error. Compressed binary files remain download-only.
+
+Tags on node lists and node pages link to an exact tag search at
+`/nodes?tag=TAG`; the filter is editable and shareable. Nodes with a `run`
+program or console logs have a Console tab showing available `stdout.log` and
+`stderr.log`, refreshed every five seconds and bounded to the preview limit.
+
+Operators and admins can use **Force rerun** (`POST /api/nodes/{id}/rerun`,
+authentication and CSRF required). This removes only that node's
+`.ngram.dependencies.hashes` and records an audit event. The next scheduler
+pass runs it through normal Ngram execution; a scheduler must be running for
+this to happen automatically. Outputs and logs are preserved by the request.

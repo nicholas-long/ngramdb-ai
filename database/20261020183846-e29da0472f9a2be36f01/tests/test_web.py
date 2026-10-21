@@ -536,3 +536,62 @@ def test_document_references_never_open_large_data_files(tmp_path,monkeypatch,ca
     monkeypatch.setattr(os,'open',docs_only)
     assert module['main']()==0
     assert capsys.readouterr().out.strip()==OTHER
+
+
+def test_gzip_preview_bounded_and_download_original(env):
+    import gzip
+    c, _, node, _ = env
+    sign(c)
+    payload = b'{"ok":true}\n' * files.CAP
+    compressed = gzip.compress(payload)
+    (node / 'output.jsonl.gz').write_bytes(compressed)
+    endpoint = '/api/nodes/' + NODE + '/file'
+    response = c.get(endpoint, params={'path': 'output.jsonl.gz'})
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview['kind'] == 'json' and preview['truncated']
+    assert preview['content'].encode() == payload[:files.CAP]
+    assert c.get(endpoint, params={'path': 'output.jsonl.gz', 'download': True}).content == compressed
+    (node / 'small.csv.gz').write_bytes(gzip.compress(b'a,b\n1,2\n'))
+    preview = c.get(endpoint, params={'path': 'small.csv.gz'}).json()
+    assert preview['rows'] == [['a', 'b'], ['1', '2']]
+    assert not preview['truncated']
+    (node / 'broken.txt.gz').write_bytes(b'invalid gzip')
+    assert c.get(endpoint, params={'path': 'broken.txt.gz'}).status_code == 422
+    (node / 'private.gz').symlink_to(node / 'output.jsonl.gz')
+    assert c.get(endpoint, params={'path': 'private.gz'}).status_code == 404
+
+
+def test_rerun_auth_hash_removal_and_no_execution(env):
+    c, _, node, state = env
+    endpoint = '/api/nodes/' + NODE + '/rerun'
+    hashes = node / '.ngram.dependencies.hashes'
+    hashes.write_text('previous hashes')
+    (node / 'output.json').write_text('preserve output')
+    assert c.post(endpoint, json={}).status_code == 401
+    h = sign(c, 'viewer')
+    assert c.post(endpoint, json={}, headers=h).status_code == 403
+    assert hashes.exists()
+    h = sign(c)
+    assert c.post(endpoint, json={}).status_code == 403
+    assert c.post(endpoint, json={}, headers=dict(h, origin='https://evil.example')).status_code == 403
+    assert hashes.exists()
+    assert c.post(endpoint, json={}, headers=h).status_code == 200
+    assert not hashes.exists()
+    assert (node / 'output.json').read_text() == 'preserve output'
+    assert c.post(endpoint, json={}, headers=h).status_code == 200
+    assert c.post('/api/nodes/' + OTHER + '/rerun', json={}, headers=h).status_code == 404
+    assert 'node_rerun_requested' in (state / 'audit.jsonl').read_text()
+
+
+def test_exact_tag_filter_and_console_files(env):
+    c, _, node, _ = env
+    sign(c)
+    assert c.get('/api/nodes', params={'tag':'example'}).json()['total'] == 1
+    assert c.get('/api/nodes', params={'tag':'exam'}).json()['total'] == 0
+    (node / 'stderr.log').write_text('collector failed\n')
+    (node / 'stdout.log').write_text('starting\n')
+    (node / 'run').write_text('#!/bin/sh\n')
+    detail = c.get('/api/nodes/' + NODE).json()
+    assert {'run', 'stdout.log', 'stderr.log'} <= {f['path'] for f in detail['files']}
+    assert c.get('/api/nodes/' + NODE + '/file', params={'path':'stderr.log'}).json()['content'] == 'collector failed\n'

@@ -1,5 +1,7 @@
 """Private file policy. No symlinks, hidden paths, credentials, or active previews."""
 import csv
+import gzip
+import zlib
 import io
 import mimetypes
 import os
@@ -89,8 +91,20 @@ def manifest(node_id, path='', depth=0):
     return result
 
 def preview(node_id, path):
-    data = read(node_id, path)
-    kind = info(path, os.stat_result((0,) * 10))['kind']
+    compressed = Path(path).suffix.lower() == '.gz'
+    try:
+        with os.fdopen(open_safe(node_id, path), 'rb') as source:
+            if compressed:
+                with gzip.GzipFile(fileobj=source) as decoded:
+                    data = decoded.read(CAP + 1)
+            else:
+                data = source.read(CAP + 1)
+    except (OSError, EOFError, zlib.error):
+        raise HTTPException(422, 'Invalid or damaged gzip file')
+    kind = info(path[:-3] if compressed else path, os.stat_result((0,) * 10))['kind']
+    # Compressed images cannot use the raw image URL; keep them downloadable.
+    if compressed and kind == 'image':
+        kind = 'binary'
     text = data[:CAP].decode('utf-8', errors='replace')
     result = {'path': path, 'kind': kind, 'truncated': len(data) > CAP, 'content': text}
     if kind == 'csv':

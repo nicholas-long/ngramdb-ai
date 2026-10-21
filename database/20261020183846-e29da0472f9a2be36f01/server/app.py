@@ -79,6 +79,20 @@ def create_app():
     def node(node_id: str, session=Depends(auth.identity)):
         return graph.detail(node_id)
 
+    @app.post('/api/nodes/{node_id}/rerun')
+    def rerun(node_id: str, session=Depends(auth.operator)):
+        graph.check_id(node_id)
+        fd = files.open_safe(node_id, directory=True)
+        try:
+            try:
+                os.unlink('.ngram.dependencies.hashes', dir_fd=fd)
+            except FileNotFoundError:
+                pass
+        finally:
+            os.close(fd)
+        auth.audit('node_rerun_requested', session['user'], nodeId=node_id)
+        return {'ok': True, 'message': 'Hashes cleared. The node will rerun on the next scheduler pass.'}
+
     @app.get('/api/nodes/{node_id}/refs')
     def refs(node_id: str, includeLoose: bool = False, session=Depends(auth.identity)):
         graph.check_id(node_id)
