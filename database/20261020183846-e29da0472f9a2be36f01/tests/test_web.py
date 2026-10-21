@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
-from server import app, auth, config, events, files, graph, tasks, worker
+from server import access, app, auth, config, events, files, graph, tasks, worker
 
 NODE = '20240101000000-00000000000000000001'
 OTHER = '20240101000000-00000000000000000002'
@@ -25,7 +25,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv('NGRAM_RUNTIME_DIR', str(root / '.ngram-runtime'))
     state = tmp_path / 'private'
     state.mkdir()
-    for module in (config, auth, tasks, worker, app):
+    for module in (config, auth, tasks, worker, app, access):
         monkeypatch.setattr(module, 'STATE', state)
     for module in (config, files, graph, events):
         monkeypatch.setattr(module, 'ROOT', root)
@@ -42,8 +42,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(graph, 'LOOSE_CACHE', (0,None,None))
     auth.SESSIONS.clear()
     auth.ATTEMPTS.clear()
+    import logging
+    monkeypatch.setattr(access, 'LOGGER', logging.Logger('test.access', level=logging.INFO))
     client = TestClient(app.create_app(), base_url='https://testserver')
-    return client, root, node, state
+    yield client, root, node, state
+    for handler in access.LOGGER.handlers:
+        handler.close()
 
 def sign(client, user='owner'):
     response = client.post('/api/login', json={'username':user,'password':'test-passphrase'})
@@ -536,6 +540,22 @@ def test_document_references_never_open_large_data_files(tmp_path,monkeypatch,ca
     monkeypatch.setattr(os,'open',docs_only)
     assert module['main']()==0
     assert capsys.readouterr().out.strip()==OTHER
+
+
+def test_timestamped_access_log(env):
+    c, _, _, state = env
+    c.get('/api/health?secret=omit')
+    c.post('/api/login', headers={'origin': 'https://evil.example'}, json={})
+    rows = [json.loads(line) for line in (state / 'access.jsonl').read_text().splitlines()]
+    assert [row['status'] for row in rows] == [200, 403]
+    assert rows[0]['request'] == 'GET /api/health HTTP/1.1'
+    assert rows[0]['timestamp'].endswith('+00:00')
+    assert rows[0]['ip'] == 'testclient'
+    handler = access.LOGGER.handlers[0]
+    handler.doRollover()
+    c.get('/api/health')
+    assert (state / 'access.jsonl').stat().st_mode & 0o777 == 0o600
+    assert len(list(state.glob('access.jsonl*'))) == 2
 
 
 def test_gzip_preview_bounded_and_download_original(env):

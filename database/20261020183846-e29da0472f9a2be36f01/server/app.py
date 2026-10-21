@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from . import auth, files, graph, tasks
+from . import access, auth, files, graph, tasks
 from .config import WEB, STATE, settings
 from .events import activity
 
@@ -47,6 +47,16 @@ def create_app():
         response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         response.headers['Cache-Control'] = 'no-store' if request.url.path.startswith('/api') else 'no-cache'
         return response
+
+    @app.middleware('http')
+    async def access_log(request, call_next):
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            access.record(request, status)
 
     @app.get('/api/health')
     def health():

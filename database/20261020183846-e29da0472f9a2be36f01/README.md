@@ -223,6 +223,18 @@ roles, cookies, CSRF, origin/body bounds, private/anonymous boundaries, traversa
 symlinks, Unix access, previews, live output reads, task idempotency/ownership,
 structured failures/stale runs and worker worktree isolation.
 
+## HTTP access logs
+
+The service writes private, timestamped JSONL HTTP request records to
+`$NGRAM_WEB_STATE/access.jsonl`, rotating at UTC midnight with 14 backups.
+Each record has `timestamp`, `ip`, `request` (method/path/protocol), and `status`.
+Query strings, headers and bodies are omitted. The client IP uses Uvicorn's
+trusted-proxy handling; configure trusted proxies to match the deployment.
+This logging starts on the next controlled service restart.
+The [access-log collector](../20261021041219-c4fceed7cdd0c2dca187) combines
+retained Apache and web log observations into compressed data files and produces
+separate rolling 24-hour top-IP counts, avoiding proxy/backend double counting.
+
 ## Preview, console, tags and reruns
 
 File previews support gzip (`.gz`) text, Markdown, JSON/JSONL and CSV files.
